@@ -7,14 +7,14 @@ Run with: python app.py
 Then open: http://localhost:8080
 
 Routes:
-  GET  /                     → dashboard (deals table)
-  GET  /game/<app_id>        → game detail page
-  POST /api/sync/steam       → trigger Steam wishlist sync
-  POST /api/sync/itad        → trigger ITAD price sync
-  GET  /api/games            → JSON: all games + deals
-  GET  /api/game/<app_id>    → JSON: game detail with prices + bundles + history
-  GET  /api/stats            → JSON: summary stats
-  DELETE /api/game/<app_id>  → remove a game from DB
+  GET  /                     â†’ dashboard (deals table)
+  GET  /game/<app_id>        â†’ game detail page
+  POST /api/sync/steam       â†’ trigger Steam wishlist sync
+  POST /api/sync/itad        â†’ trigger ITAD price sync
+  GET  /api/games            â†’ JSON: all games + deals
+  GET  /api/game/<app_id>    â†’ JSON: game detail with prices + bundles + history
+  GET  /api/stats            â†’ JSON: summary stats
+  DELETE /api/game/<app_id>  â†’ remove a game from DB
 """
 
 import os
@@ -38,14 +38,14 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from database import (
     init_db, get_deals_report, get_game_by_id,
     get_all_prices_for_game, get_game_price_history,
-    get_game_bundles, get_stats, get_all_games, delete_game
+    get_game_bundles, get_stats, get_all_games, delete_game, get_connection
 )
 from steam import sync_wishlist
 from itad import sync_prices
 
 app = Flask(__name__)
 
-# ── Sync state (simple in-memory flag for showing progress in UI) ──────────────
+# â”€â”€ Sync state (simple in-memory flag for showing progress in UI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 sync_status = {
     "running": False,
     "step": "",
@@ -68,7 +68,7 @@ def run_full_sync(steam_id: str, steam_key: str, itad_key: str):
                 sync_prices(itad_key)
             except Exception as itad_err:
                 # ITAD may return 403 if the app hasn't been approved yet for
-                # price endpoints. Log the warning and continue — the code will
+                # price endpoints. Log the warning and continue â€” the code will
                 # work automatically once ITAD grants access.
                 print(f"[ITAD] Skipped: {itad_err}")
                 sync_status["step"] = "ITAD skipped (see terminal)"
@@ -79,11 +79,11 @@ def run_full_sync(steam_id: str, steam_key: str, itad_key: str):
         sync_status = {"running": False, "step": "", "error": str(e), "done": True}
 
 
-# ── Page routes ────────────────────────────────────────────────────────────────
+# â”€â”€ Page routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.route("/")
 def index():
-    """Main dashboard — renders the full deals table."""
+    """Main dashboard â€” renders the full deals table."""
     return render_template("index.html")
 
 
@@ -102,7 +102,7 @@ def settings():
     return render_template("settings.html")
 
 
-# ── API routes ─────────────────────────────────────────────────────────────────
+# â”€â”€ API routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.route("/api/stats")
 def api_stats():
@@ -160,14 +160,15 @@ def api_games_with_all_prices():
             all_prices = get_all_prices_for_game(game["app_id"])
             prices = [p for p in all_prices if not p["store"].startswith("Historic Low")]
             
-            # Calculate historic low from price_history
-            historic = get_game_price_history(game["app_id"])
-            historic_low = None
-            historic_low_store = None
-            if historic:
-                min_entry = min(historic, key=lambda h: h["price"] or float('inf'))
-                historic_low = min_entry.get("price")
-                historic_low_store = min_entry.get("store")
+            # Calculate historic low from the historic_lows table (from ITAD)
+            conn = get_connection()
+            historic_row = conn.execute(
+                "SELECT MIN(price) as low_price, store FROM historic_lows WHERE app_id = ? GROUP BY app_id ORDER BY low_price ASC LIMIT 1",
+                (game["app_id"],)
+            ).fetchone()
+            historic_low = historic_row[0] if historic_row else None
+            historic_low_store = historic_row[1] if historic_row else None
+            conn.close()
             
             # Count bundles
             bundles = get_game_bundles(game["app_id"])
@@ -242,7 +243,7 @@ def api_sync_full():
     """
     Trigger a full sync. Accepts JSON body:
       { steam_id, steam_key, itad_key }
-    Runs in a background thread — poll /api/sync/status for progress.
+    Runs in a background thread â€” poll /api/sync/status for progress.
     """
     global sync_status
 
@@ -274,28 +275,28 @@ def api_delete_game(app_id: int):
     return jsonify({"ok": True})
 
 
-# ── Template filters ───────────────────────────────────────────────────────────
+# â”€â”€ Template filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.template_filter("gbp")
 def fmt_gbp(value):
-    """Format a float as GBP: £14.99"""
+    """Format a float as GBP: Â£14.99"""
     if value is None:
         return "N/A"
-    return f"£{value:,.2f}"
+    return f"Â£{value:,.2f}"
 
 
 @app.template_filter("short_date")
 def short_date(value):
     """Trim ISO datetime to YYYY-MM-DD."""
     if not value:
-        return "—"
+        return "â€”"
     return str(value)[:10]
 
 
-# ── Startup ────────────────────────────────────────────────────────────────────
+# â”€â”€ Startup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     init_db()
-    print("\n🎮 Steam Wishlist Tracker running at http://localhost:8080\n")
+    print("\nðŸŽ® Steam Wishlist Tracker running at http://localhost:8080\n")
     # debug=False for stability; set to True during development
     app.run(host="0.0.0.0", port=8080, debug=False)

@@ -116,9 +116,14 @@ def fetch_app_details(app_id: int) -> dict | None:
         if price_original_pence is not None:
             price_original_gbp = price_original_pence / 100.0
         
-        # If no original price, use current price as baseline
+        # IMPORTANT: Only use prices if we have BOTH current AND original
+        # If Steam doesn't provide the original price, we can't use it as a baseline
+        # Better to skip Steam and use ITAD as the source
         if price_original_gbp is None:
-            price_original_gbp = price_gbp
+            # No original price available, set both to None
+            # This game will get prices from ITAD instead
+            price_gbp = None
+            price_original_gbp = None
 
     return {
         "name": info.get("name", f"App {app_id}"),
