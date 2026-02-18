@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+{% block title %}{{ game.title }} — Wishlist Tracker{% endblock %}
+
+{% block extra_head %}
+<style>
+  .back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 24px;
+    transition: color 0.15s;
+  }
+  .back-link:hover { color: var(--text); }
+
+  /* ── HERO ──────────────────────────────────────────────────────────────── */
+  .game-hero {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 28px;
+    align-items: start;
+    margin-bottom: 36px;
+  }
+
+  .hero-art {
+    width: 280px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    aspect-ratio: 2/1;
+    object-fit: cover;
+    background: var(--surface2);
+  }
+
+  .hero-info { padding-top: 4px; }
+
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-bottom: 12px;
+  }
+
+  .hero-meta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    align-items: center;
+  }
+
+  .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+
+  /* ── BEST PRICE HIGHLIGHT ──────────────────────────────────────────────── */
+  .best-price-card {
+    display: inline-flex;
+    flex-direction: column;
+    background: rgba(0,229,160,0.07);
+    border: 1px solid var(--green-dim);
+    border-radius: 10px;
+    padding: 16px 24px;
+    margin-top: 12px;
+  }
+
+  .best-price-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--green-dim);
+    margin-bottom: 4px;
+  }
+
+  .best-price-value {
+    font-family: var(--font-display);
+    font-size: 2.6rem;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+
+  .best-price-store { font-size: 0.72rem; color: var(--text-dim); margin-top: 6px; }
+
+  /* ── GRID ──────────────────────────────────────────────────────────────── */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+
+  .card-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* ── PRICES TABLE ──────────────────────────────────────────────────────── */
+  .price-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .price-row:last-child { border-bottom: none; }
+  .price-row:hover { background: rgba(255,255,255,0.02); }
+
+  .price-row .store-name { font-size: 0.8rem; color: var(--text); }
+  .price-row .price-amt  {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .price-row .price-amt.best { color: var(--green); }
+  .price-row .regular-price  { font-size: 0.68rem; color: var(--text-muted); text-decoration: line-through; }
+
+  /* ── CHART ──────────────────────────────────────────────────────────────── */
+  .chart-container {
+    padding: 20px 18px;
+    height: 240px;
+    position: relative;
+  }
+
+  canvas#history-chart {
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* ── BUNDLES ──────────────────────────────────────────────────────────── */
+  .bundle-row {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .bundle-row:last-child { border-bottom: none; }
+  .bundle-title { font-size: 0.82rem; color: var(--text); margin-bottom: 4px; }
+  .bundle-meta  { font-size: 0.68rem; color: var(--text-dim); display: flex; gap: 12px; }
+
+  /* ── NO DATA ──────────────────────────────────────────────────────────── */
+  .no-data {
+    padding: 32px 18px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<a href="/" class="back-link">← All Deals</a>
+
+<!-- Hero section (populated via JS) -->
+<div class="game-hero" id="game-hero">
+  <div style="width:280px;height:140px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);"></div>
+  <div>
+    <div style="height:32px;width:60%;background:var(--surface2);border-radius:6px;margin-bottom:12px;"></div>
+    <div style="height:14px;width:40%;background:var(--surface2);border-radius:4px;"></div>
+  </div>
+</div>
+
+<!-- Detail grid -->
+<div class="detail-grid">
+
+  <!-- Store prices -->
+  <div class="card" id="prices-card">
+    <div class="card-header">
+      <span>Store Prices (GBP)</span>
+      <span id="price-updated" style="color:var(--text-muted)"></span>
+    </div>
+    <div id="prices-list">
+      <div class="no-data"><span class="spinner"></span></div>
+    </div>
+  </div>
+
+  <!-- Price history chart -->
+  <div class="card">
+    <div class="card-header">Price History</div>
+    <div class="chart-container">
+      <canvas id="history-chart"></canvas>
+    </div>
+  </div>
+
+</div>
+
+<!-- Bundles (full width) -->
+<div class="card" id="bundles-card">
+  <div class="card-header">Bundle History</div>
+  <div id="bundles-list">
+    <div class="no-data"><span class="spinner"></span></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Lightweight chart library -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const APP_ID = {{ game.app_id }};
+
+async function loadGameDetail() {
+  const res  = await fetch(`/api/game/${APP_ID}`);
+  const data = await res.json();
+
+  renderHero(data.game, data.prices);
+  renderPrices(data.prices);
+  renderChart(data.history);
+  renderBundles(data.bundles);
+}
+
+// ── Hero ──────────────────────────────────────────────────────────────────────
+function renderHero(game, prices) {
+  // Find best price
+  const priced = prices.filter(p => !p.store.startsWith("Historic Low") && p.price_current !== null);
+  const best   = priced.length ? priced.reduce((a, b) => a.price_current < b.price_current ? a : b) : null;
+
+  const thumb = game.header_image
+    ? `<img class="hero-art" src="${game.header_image}" alt="">`
+    : `<div class="hero-art"></div>`;
+
+  const bestPriceBlock = best ? `
+    <div class="best-price-card">
+      <div class="best-price-label">Best Price</div>
+      <div class="best-price-value">£${Number(best.price_current).toFixed(2)}</div>
+      <div class="best-price-store">
+        ${best.discount_pct > 0 ? `<span class="badge badge-green" style="margin-right:6px">${best.discount_pct}% off</span>` : ""}
+        via <a href="${best.url || '#'}" target="_blank" rel="noopener" style="color:var(--green-dim)">${escHtml(best.store)}</a>
+      </div>
+    </div>` : `<div style="color:var(--text-muted);margin-top:12px;font-size:0.78rem;">No prices tracked yet — run a sync.</div>`;
+
+  const lastChecked = game.last_checked
+    ? `<span class="badge badge-muted">Checked ${game.last_checked.slice(0,10)}</span>`
+    : `<span class="badge badge-muted">Never synced</span>`;
+
+  document.getElementById("game-hero").innerHTML = `
+    ${thumb}
+    <div class="hero-info">
+      <h1 class="hero-title">${escHtml(game.title)}</h1>
+      <div class="hero-meta">
+        ${lastChecked}
+        <span style="color:var(--text-muted);font-size:0.68rem;">App ID: ${game.app_id}</span>
+      </div>
+      ${bestPriceBlock}
+      <div class="hero-actions">
+        <a href="${game.steam_url || '#'}" target="_blank" class="btn btn-ghost">View on Steam ↗</a>
+        <a href="/" class="btn btn-ghost">← Back</a>
+      </div>
+    </div>`;
+}
+
+// ── Prices list ───────────────────────────────────────────────────────────────
+function renderPrices(prices) {
+  const list = document.getElementById("prices-list");
+
+  // Filter out "historic low" pseudo-entries
+  const current = prices.filter(p => !p.store.startsWith("Historic Low"));
+  if (!current.length) {
+    list.innerHTML = `<div class="no-data">No prices found. Try syncing.</div>`;
+    return;
+  }
+
+  const sorted = [...current].sort((a, b) => a.price_current - b.price_current);
+  const minPx  = sorted[0]?.price_current;
+
+  // Updated timestamp from most recent price
+  const latest = prices.reduce((a, b) =>
+    (a.fetched_at || "") > (b.fetched_at || "") ? a : b, prices[0]);
+  const updEl = document.getElementById("price-updated");
+  if (updEl && latest?.fetched_at) updEl.textContent = latest.fetched_at.slice(0,10);
+
+  list.innerHTML = sorted.map(p => {
+    const isBest  = p.price_current === minPx;
+    const discBadge = p.discount_pct > 0
+      ? `<span class="badge badge-green" style="font-size:0.6rem">${p.discount_pct}% off</span>` : "";
+    const regularPx = p.price_regular && p.price_regular > p.price_current
+      ? `<span class="regular-price">£${Number(p.price_regular).toFixed(2)}</span>` : "";
+    const linkOpen  = p.url ? `<a href="${p.url}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">` : "";
+    const linkClose = p.url ? "</a>" : "";
+
+    return `
+      <div class="price-row">
+        ${linkOpen}
+          <div>
+            <div class="store-name">${escHtml(p.store)}${p.url ? ' ↗' : ''}</div>
+            ${regularPx}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            ${discBadge}
+            <span class="price-amt ${isBest ? 'best' : ''}">£${Number(p.price_current).toFixed(2)}</span>
+          </div>
+        ${linkClose}
+      </div>`;
+  }).join("");
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+function renderChart(history) {
+  const ctx = document.getElementById("history-chart").getContext("2d");
+
+  if (!history || history.length === 0) {
+    ctx.fillStyle = "rgba(100,116,139,0.4)";
+    ctx.font = "13px 'DM Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("No price history yet", ctx.canvas.width / 2, ctx.canvas.height / 2);
+    return;
+  }
+
+  // Filter out "historic low" metadata entries for the chart
+  const chartData = history.filter(h => !h.store.startsWith("Historic Low"));
+
+  // Group by store so each store is a separate line
+  const storeMap = {};
+  chartData.forEach(h => {
+    if (!storeMap[h.store]) storeMap[h.store] = [];
+    storeMap[h.store].push({ x: h.recorded_at.slice(0,10), y: h.price });
+  });
+
+  const COLOURS = ["#00e5a0","#f5a623","#4f9cf9","#a855f7","#ff4757","#00b8d4"];
+  const datasets = Object.entries(storeMap).map(([store, pts], i) => ({
+    label:           store,
+    data:            pts,
+    borderColor:     COLOURS[i % COLOURS.length],
+    backgroundColor: COLOURS[i % COLOURS.length] + "22",
+    tension:         0.3,
+    pointRadius:     3,
+    fill:            false,
+    borderWidth:     2,
+  }));
+
+  new Chart(ctx, {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: { xAxisKey: "x", yAxisKey: "y" },
+      plugins: {
+        legend: {
+          labels: { color: "#64748b", font: { family: "'DM Mono', monospace", size: 10 }, boxWidth: 12 }
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` £${Number(ctx.parsed.y).toFixed(2)} — ${ctx.dataset.label}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "category",
+          ticks: { color: "#64748b", font: { size: 10 }, maxTicksLimit: 8 },
+          grid:  { color: "#1c2433" },
+        },
+        y: {
+          ticks: {
+            color: "#64748b",
+            font: { size: 10 },
+            callback: v => `£${v.toFixed(2)}`
+          },
+          grid: { color: "#1c2433" },
+        }
+      }
+    }
+  });
+}
+
+// ── Bundles ───────────────────────────────────────────────────────────────────
+function renderBundles(bundles) {
+  const list = document.getElementById("bundles-list");
+
+  if (!bundles || !bundles.length) {
+    list.innerHTML = `<div class="no-data">No bundle history found for this game.</div>`;
+    return;
+  }
+
+  list.innerHTML = bundles.map(b => {
+    const price    = b.tier_price ? `$${Number(b.tier_price).toFixed(2)} USD` : "Price N/A";
+    const expires  = b.expires_at ? ` · Expires ${b.expires_at.slice(0,10)}` : "";
+    const linkOpen  = b.bundle_url ? `<a href="${b.bundle_url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">` : "";
+    const linkClose = b.bundle_url ? "</a>" : "";
+
+    return `
+      <div class="bundle-row">
+        ${linkOpen}
+          <div class="bundle-title">${escHtml(b.bundle_title)}${b.bundle_url ? ' ↗' : ''}</div>
+          <div class="bundle-meta">
+            <span style="color:var(--purple)">${price}</span>
+            ${b.store ? `<span>${escHtml(b.store)}</span>` : ""}
+            <span>Found ${(b.discovered_at || "").slice(0,10)}</span>
+            ${expires ? `<span>${expires}</span>` : ""}
+          </div>
+        ${linkClose}
+      </div>`;
+  }).join("");
+}
+
+function escHtml(str) {
+  const d = document.createElement("div");
+  d.textContent = str || "";
+  return d.innerHTML;
+}
+
+document.addEventListener("DOMContentLoaded", loadGameDetail);
+</script>
+{% endblock %}
