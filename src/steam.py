@@ -11,18 +11,18 @@ Steam API overview:
     from the Steam Store API (no key needed for that part).
 
 How to get your Steam API key:
-  → https://steamcommunity.com/dev/apikey
+  â†’ https://steamcommunity.com/dev/apikey
   (Log in, enter any domain name, copy the key)
 
 How to find your Steam ID:
-  → Open Steam → Profile → Copy URL
-  → If it's a custom URL like /id/username, visit:
+  â†’ Open Steam â†’ Profile â†’ Copy URL
+  â†’ If it's a custom URL like /id/username, visit:
     https://www.steamidfinder.com to convert to a numeric SteamID64
 """
 
 import requests
 import time
-from src.database import upsert_game, get_all_games
+from src.database import upsert_game, get_all_games, upsert_price
 
 
 # Steam endpoints
@@ -45,7 +45,7 @@ def fetch_wishlist_app_ids(steam_id: str, api_key: str) -> list[int]:
     params = {
         "key": api_key,
         "steamid": steam_id,
-        "count": 5000,   # max items — raise if you have a very large wishlist
+        "count": 5000,   # max items â€” raise if you have a very large wishlist
     }
 
     print("[Steam] Fetching wishlist app IDs...")
@@ -56,11 +56,11 @@ def fetch_wishlist_app_ids(steam_id: str, api_key: str) -> list[int]:
 
     data = resp.json()
 
-    # The response nests under response → items → appid
+    # The response nests under response â†’ items â†’ appid
     items = data.get("response", {}).get("items", [])
 
     if not items:
-        print("[Steam] ⚠ No wishlist items found. Check your Steam ID and privacy settings.")
+        print("[Steam] âš  No wishlist items found. Check your Steam ID and privacy settings.")
         print("        Your Steam profile and game details must be set to Public.")
         return []
 
@@ -81,7 +81,7 @@ def fetch_app_details(app_id: int) -> dict | None:
     """
     params = {
         "appids": app_id,
-        "cc": "gb",    # country code — affects prices shown
+        "cc": "gb",    # country code â€” affects prices shown
         "l": "en",
     }
 
@@ -97,14 +97,35 @@ def fetch_app_details(app_id: int) -> dict | None:
 
     info = app_data.get("data", {})
 
-    # Filter to games only — skip DLCs, soundtracks, tools
+    # Filter to games only â€” skip DLCs, soundtracks, tools
     if info.get("type") != "game":
         return None
+
+    # Extract price information (prices are in pence, convert to pounds)
+    price_overview = info.get("price_overview", {})
+    price_gbp = None
+    price_original_gbp = None
+    
+    if price_overview:
+        # Prices come in pence from Steam API
+        price_pence = price_overview.get("final")
+        price_original_pence = price_overview.get("initial")
+        
+        if price_pence is not None:
+            price_gbp = price_pence / 100.0
+        if price_original_pence is not None:
+            price_original_gbp = price_original_pence / 100.0
+        
+        # If no original price, use current price as baseline
+        if price_original_gbp is None:
+            price_original_gbp = price_gbp
 
     return {
         "name": info.get("name", f"App {app_id}"),
         "steam_url": f"https://store.steampowered.com/app/{app_id}/",
         "header_image": info.get("header_image"),
+        "price_gbp": price_gbp,
+        "price_original_gbp": price_original_gbp,
     }
 
 
@@ -135,7 +156,7 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
         details = fetch_app_details(app_id)
 
         if details is None:
-            print("⏭  Skipped (not a game or unavailable)")
+            print("â­  Skipped (not a game or unavailable)")
         else:
             upsert_game(
                 app_id=app_id,
@@ -143,8 +164,21 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
                 steam_url=details["steam_url"],
                 header_image=details["header_image"],
             )
+            
+            # Save Steam's price as a store entry
+            if details["price_gbp"] is not None:
+                upsert_price(
+                    app_id=app_id,
+                    store="Steam",
+                    price_current=details["price_gbp"],
+                    price_regular=details["price_original_gbp"] or details["price_gbp"],
+                    currency="GBP",
+                    discount_pct=0,  # Will be calculated by discount logic later
+                    url=details["steam_url"],
+                )
+            
             saved.append(app_id)
-            print(f"✓ {details['name']}")
+            print(f"âœ“ {details['name']}")
 
         # Be polite to Steam's servers
         time.sleep(RATE_LIMIT_DELAY)

@@ -11,9 +11,10 @@ Tables:
   bundles       → bundle appearances (Humble, Fanatical, etc.)
 """
 
+from datetime import datetime, timezone
 import sqlite3
+import os
 from pathlib import Path
-from datetime import datetime
 
 DB_PATH = Path(__file__).parent.parent / "data" / "wishlist.db"
 
@@ -81,8 +82,37 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_history_app   ON price_history(app_id);
         CREATE INDEX IF NOT EXISTS idx_bundles_app   ON bundles(app_id);
     """)
+
+    # Historic lows table — tracks all-time lowest prices
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS historic_lows (
+            id INTEGER PRIMARY KEY,
+            app_id INTEGER NOT NULL,
+            store TEXT NOT NULL,
+            price REAL NOT NULL,
+            currency TEXT DEFAULT 'GBP',
+            discount_pct INTEGER DEFAULT 0,
+            recorded_at TEXT,
+            fetched_at TEXT,
+            UNIQUE(app_id, store)
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+def clear_database() -> None:
+    """Drop all tables and reinitialize (for schema changes)."""
+    conn = get_connection()
+    conn.execute("DROP TABLE IF EXISTS price_history")
+    conn.execute("DROP TABLE IF EXISTS historic_lows")
+    conn.execute("DROP TABLE IF EXISTS prices")
+    conn.execute("DROP TABLE IF EXISTS bundles")
+    conn.execute("DROP TABLE IF EXISTS games")
+    conn.commit()
+    conn.close()
+    init_db()
 
 
 # ── GAME CRUD ──────────────────────────────────────────────────────────────────
@@ -140,7 +170,7 @@ def upsert_price(app_id: int, store: str, price_current: float,
     currency should always be 'GBP' — conversion happens before this call.
     """
     conn = get_connection()
-    now = datetime.now(datetime.timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     conn.execute("""
         INSERT INTO prices (app_id, store, price_current, price_regular, currency, discount_pct, url, fetched_at)
@@ -163,6 +193,42 @@ def upsert_price(app_id: int, store: str, price_current: float,
     conn.close()
 
 
+def upsert_historic_low(app_id: int, store: str, price: float, 
+                        currency: str = "GBP", discount_pct: int = 0, 
+                        recorded_date: str = None) -> None:
+    """
+    Save historic low price separately from current prices.
+    This tracks the all-time lowest price seen for a game.
+    """
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # First, check if this app_id + store combination exists
+    existing = conn.execute(
+        "SELECT price FROM historic_lows WHERE app_id = ? AND store = ?",
+        (app_id, store)
+    ).fetchone()
+
+    if existing:
+        # Only update if the new price is lower
+        existing_price = existing[0]
+        if price < existing_price:
+            conn.execute("""
+                UPDATE historic_lows 
+                SET price = ?, discount_pct = ?, recorded_at = ?, fetched_at = ?
+                WHERE app_id = ? AND store = ?
+            """, (price, discount_pct, recorded_date, now, app_id, store))
+    else:
+        # Insert new record
+        conn.execute("""
+            INSERT INTO historic_lows (app_id, store, price, currency, discount_pct, recorded_at, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (app_id, store, price, currency, discount_pct, recorded_date, now))
+
+    conn.commit()
+    conn.close()
+
+
 def upsert_bundle(app_id: int, bundle_title: str, store: str = None,
                   tier_price: float = None, currency: str = "GBP",
                   bundle_url: str = None, expires_at: str = None) -> None:
@@ -180,61 +246,45 @@ def upsert_bundle(app_id: int, bundle_title: str, store: str = None,
 
 def get_deals_report() -> list[dict]:
     """
-    Main report: cheapest current price, historic low, and bundle count per game.
-    Sorted by discount descending, then price ascending.
+    Get all games with their best current deal + historic low.
+    Sorted by discount (desc) then price (asc).
     """
     conn = get_connection()
     rows = conn.execute("""
-        WITH cheapest AS (
-            SELECT
-                p.app_id,
-                MIN(p.price_current)  AS best_price,
-                p.currency,
-                p.store               AS best_store,
-                p.url                 AS best_url,
-                p.discount_pct        AS best_discount
-            FROM prices p
-            -- Exclude "Historic Low" metadata entries — they're for reference only
-            WHERE p.store NOT LIKE 'Historic Low%'
-            INNER JOIN (
-                SELECT app_id, MIN(price_current) AS min_price
-                FROM prices
-                WHERE store NOT LIKE 'Historic Low%'
-                GROUP BY app_id
-            ) sub ON p.app_id = sub.app_id AND p.price_current = sub.min_price
-            GROUP BY p.app_id
-        ),
-        historic AS (
-            SELECT
+        WITH best_prices AS (
+            SELECT 
                 app_id,
-                MIN(price) AS historic_low,
-                store      AS historic_low_store
-            FROM price_history
-            GROUP BY app_id
+                store,
+                price_current,
+                currency,
+                discount_pct,
+                ROW_NUMBER() OVER (PARTITION BY app_id ORDER BY discount_pct DESC, price_current ASC) as rn
+            FROM prices
+            WHERE price_current IS NOT NULL
         ),
-        bundle_count AS (
-            SELECT app_id, COUNT(*) AS num_bundles
-            FROM bundles GROUP BY app_id
+        lowest_recorded AS (
+            SELECT 
+                app_id,
+                MIN(price) as lowest_price
+            FROM historic_lows
+            WHERE price IS NOT NULL
+            GROUP BY app_id
         )
-        SELECT
+        SELECT 
             g.app_id,
             g.title,
-            g.steam_url,
-            g.header_image,
-            g.last_checked,
-            c.best_price,
-            c.best_store,
-            c.best_url,
-            c.best_discount,
-            c.currency,
-            h.historic_low,
-            h.historic_low_store,
-            COALESCE(bc.num_bundles, 0) AS num_bundles
+            bp.store AS best_store,
+            bp.price_current AS best_price,
+            bp.currency,
+            bp.discount_pct AS best_discount,
+            lr.lowest_price AS historic_low
         FROM games g
-        LEFT JOIN cheapest      c  ON g.app_id = c.app_id
-        LEFT JOIN historic      h  ON g.app_id = h.app_id
-        LEFT JOIN bundle_count  bc ON g.app_id = bc.app_id
-        ORDER BY c.best_discount DESC NULLS LAST, c.best_price ASC NULLS LAST
+        LEFT JOIN best_prices bp ON g.app_id = bp.app_id AND bp.rn = 1
+        LEFT JOIN lowest_recorded lr ON g.app_id = lr.app_id
+        WHERE bp.app_id IS NOT NULL
+        ORDER BY 
+            CAST(COALESCE(bp.discount_pct, 0) AS INTEGER) DESC,
+            bp.price_current ASC
     """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -253,24 +303,23 @@ def get_all_prices_for_game(app_id: int) -> list[dict]:
 
 
 def get_game_price_history(app_id: int) -> list[dict]:
-    """Full price history for a single game — for chart rendering."""
+    """Get price history for a specific game."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT store, price, currency, discount_pct, recorded_at
-        FROM price_history WHERE app_id = ?
-        ORDER BY recorded_at ASC
-    """, (app_id,)).fetchall()
+    rows = conn.execute(
+        "SELECT * FROM price_history WHERE app_id = ? ORDER BY recorded_at DESC",
+        (app_id,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_game_bundles(app_id: int) -> list[dict]:
+    """Get bundle history for a specific game."""
     conn = get_connection()
-    rows = conn.execute("""
-        SELECT bundle_title, store, tier_price, currency, bundle_url, expires_at, discovered_at
-        FROM bundles WHERE app_id = ?
-        ORDER BY discovered_at DESC
-    """, (app_id,)).fetchall()
+    rows = conn.execute(
+        "SELECT * FROM bundles WHERE app_id = ? ORDER BY expires_at DESC",
+        (app_id,)
+    ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -283,16 +332,19 @@ def get_game_by_id(app_id: int) -> dict | None:
 
 
 def get_stats() -> dict:
-    """Summary stats for the dashboard header."""
+    """Get summary statistics for the database."""
     conn = get_connection()
+    
     total_games = conn.execute("SELECT COUNT(*) FROM games").fetchone()[0]
-    on_sale     = conn.execute("SELECT COUNT(DISTINCT app_id) FROM prices WHERE discount_pct > 0").fetchone()[0]
-    total_prices = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
     total_bundles = conn.execute("SELECT COUNT(*) FROM bundles").fetchone()[0]
+    games_with_prices = conn.execute(
+        "SELECT COUNT(DISTINCT app_id) FROM prices"
+    ).fetchone()[0]
+    
     conn.close()
+    
     return {
         "total_games": total_games,
-        "on_sale": on_sale,
-        "total_prices": total_prices,
         "total_bundles": total_bundles,
+        "games_with_prices": games_with_prices,
     }

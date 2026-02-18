@@ -28,7 +28,16 @@ except ImportError:
 # Add src/ to the Python path so we can import our modules
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from database import init_db, get_deals_report, get_game_price_history, get_game_bundles, get_all_games
+from src.database import (
+    init_db,
+    get_all_games,
+    get_deals_report,
+    get_game_price_history,
+    get_game_bundles,
+    get_stats,
+    delete_game,
+    clear_database,
+)
 from steam import sync_wishlist
 from itad import sync_prices
 
@@ -116,13 +125,10 @@ def cmd_sync(args) -> None:
     # Step 2: ITAD prices
     if itad_key:
         print(f"\n{BOLD}[2/2] Fetching ITAD prices...{RESET}")
-        country = args.country or "GB"
-        sync_prices(itad_key, country)
+        sync_prices(itad_key)  # Removed country parameter
     else:
         print(f"\n{YELLOW}[2/2] Skipping ITAD (no --itad-key provided){RESET}")
         print("      Get a free key at https://isthereanydeal.com/dev/app/")
-
-
 
     print(f"\n{GREEN}✓ Sync complete!{RESET} Run `python main.py report` to see deals.\n")
 
@@ -146,67 +152,71 @@ def cmd_report(args) -> None:
     if args.min_discount:
         rows = [r for r in rows if (r.get("best_discount") or 0) >= args.min_discount]
 
+    if not rows:
+        print(f"\n{YELLOW}No games match your filters.{RESET}\n")
+        return
+
     print(f"\n{BOLD}{CYAN}═══ Wishlist Deals Report ═══{RESET}")
     print(f"{DIM}{len(rows)} games | sorted by discount then price{RESET}\n")
 
     # ── Table header ──────────────────────────────────────────────────────────
-    header = (
-        f"{'GAME':<{COL_TITLE}} "
-        f"{'STORE':<{COL_STORE}} "
-        f"{'PRICE':>{COL_PRICE}} "
-        f"{'OFF':>{COL_DISC}} "
-        f"{'HIST. LOW':>{COL_HIST}} "
-        f"{'BUNDLES':>{COL_BUNDLES}}"
-    )
-    print(f"{BOLD}{header}{RESET}")
-    print("─" * (COL_TITLE + COL_STORE + COL_PRICE + COL_DISC + COL_HIST + COL_BUNDLES + 10))
+    print(f"  {'GAME':<45} {'STORE':<20} {'PRICE':>10} {'DISC':>6} {'LOW':>10}")
+    print("  " + "─" * 97)
 
-    for row in rows:
-        title = row["title"][:COL_TITLE - 1] if row["title"] else "Unknown"
-        store = (row.get("best_store") or "—")[:COL_STORE - 1]
-        price = fmt_price(row.get("best_price"), row.get("currency") or "GBP")
-        disc  = colour_discount(row.get("best_discount") or 0)
-        hist  = fmt_price(row.get("historic_low"), row.get("currency") or "GBP")
-        bundles = row.get("num_bundles", 0)
-        bundle_str = f"{GREEN}{bundles}{RESET}" if bundles > 0 else f"{DIM}{bundles}{RESET}"
+    for r in rows:
+        title = r["title"][:44] if r["title"] else "Unknown"
+        store = r["best_store"][:19] if r.get("best_store") else "N/A"
+        price = fmt_price(r["best_price"], r["currency"]) if r.get("best_price") else "N/A"
+        disc  = f"{r['best_discount']}%" if r.get("best_discount") else "—"
+        low   = fmt_price(r["historic_low"], r["currency"]) if r.get("historic_low") else "—"
 
-        # Append indicator if at/near historic low
-        vs_hist = colour_vs_historic(row.get("best_price"), row.get("historic_low"))
+        print(f"  {title:<45} {store:<20} {price:>10} {disc:>5}  {low:>10}")
 
-        print(
-            f"{title:<{COL_TITLE}} "
-            f"{store:<{COL_STORE}} "
-            f"{price:>{COL_PRICE}} "
-            f"{disc:>{COL_DISC + 12}} "  # extra padding for ANSI codes
-            f"{hist:>{COL_HIST}} "
-            f"{bundle_str:>{COL_BUNDLES}}"
-            f"{vs_hist}"
-        )
-
+    # ── Summary footer ────────────────────────────────────────────────────────
     print()
-
-    # Summary stats
-    with_price = [r for r in rows if r.get("best_price") is not None]
-    on_sale = [r for r in with_price if (r.get("best_discount") or 0) > 0]
-    at_low  = [r for r in with_price if r.get("historic_low") and
-               r["best_price"] and r["best_price"] <= r["historic_low"] * 1.05]
-
-    print(f"{DIM}Summary: {len(with_price)} priced | {len(on_sale)} on sale | "
-          f"{len(at_low)} at/near historic low{RESET}\n")
+    stats = get_stats()
+    on_sale_count = sum(1 for r in rows if r.get("best_discount", 0) and r["best_discount"] > 0)
+    print(f"{DIM}Summary: {on_sale_count}/{len(rows)} games on sale | {stats['total_bundles']} bundles tracked{RESET}")
+    print()
 
 
 def cmd_game(args) -> None:
-    """Detailed view for a single game: price history + bundles."""
-    app_id = args.app_id
-
+    """Detailed view for a single game: price history + bundles.
+    Accepts either Steam App ID (numeric) or game name (partial match, case-insensitive).
+    """
     games = get_all_games()
-    game = next((g for g in games if g["app_id"] == app_id), None)
+    if not games:
+        print(f"\n{YELLOW}No games in database.{RESET} Run `python main.py sync` first.\n")
+        sys.exit(1)
+    
+    game = None
+
+    # Check if input is numeric (App ID)
+    try:
+        app_id = int(args.game_id)
+        game = next((g for g in games if g["app_id"] == app_id), None)
+    except ValueError:
+        # Not a number, search by game name (case-insensitive, partial match)
+        search_term = str(args.game_id).lower()
+        matches = [g for g in games if search_term in g["title"].lower()]
+        
+        if len(matches) == 1:
+            game = matches[0]
+        elif len(matches) > 1:
+            print(f"\n{YELLOW}Multiple games found matching '{args.game_id}':{RESET}")
+            for g in matches[:10]:  # Show first 10 matches
+                print(f"  • {g['title']} (App ID: {g['app_id']})")
+            if len(matches) > 10:
+                print(f"  {DIM}... and {len(matches) - 10} more{RESET}")
+            print(f"\n{DIM}Be more specific or use the App ID.{RESET}\n")
+            sys.exit(1)
 
     if not game:
-        print(f"{RED}Game {app_id} not found in database.{RESET}")
-        print("Run `python main.py sync` first, or check the App ID.")
+        print(f"\n{RED}Game '{args.game_id}' not found in database.{RESET}")
+        print("Run `python main.py sync` first, or check the App ID / game name.\n")
         sys.exit(1)
 
+    app_id = game["app_id"]
     print(f"\n{BOLD}{CYAN}═══ {game['title']} ═══{RESET}")
     print(f"{DIM}Steam App ID: {app_id}{RESET}")
     print(f"{DIM}URL: {game.get('steam_url', 'N/A')}{RESET}")
@@ -259,6 +269,17 @@ def cmd_list(args) -> None:
     print()
 
 
+def cmd_clear(args) -> None:
+    """Clear all data from database and reinitialize."""
+    confirm = input(f"{RED}⚠  This will delete ALL data. Type 'yes' to confirm: {RESET}")
+    if confirm.lower() == "yes":
+        from src.database import clear_database
+        clear_database()
+        print(f"{GREEN}✓ Database cleared and reinitialized.{RESET}\n")
+    else:
+        print("Cancelled.\n")
+
+
 # ── CLI setup ─────────────────────────────────────────────────────────────────
 
 def main():
@@ -292,7 +313,7 @@ Environment variables (alternative to flags):
     sync_p.add_argument("--steam-id",   help="Your SteamID64 (17-digit number)")
     sync_p.add_argument("--steam-key",  help="Steam Web API key")
     sync_p.add_argument("--itad-key",   help="IsThereAnyDeal API key")
-    sync_p.add_argument("--country",    default="GB", help="Country code for prices (default: GB)")
+    # Removed: --country (not used)
     sync_p.set_defaults(func=cmd_sync)
 
     # ── report subcommand ──────────────────────────────────────────────────────
@@ -304,12 +325,16 @@ Environment variables (alternative to flags):
 
     # ── game subcommand ────────────────────────────────────────────────────────
     game_p = subparsers.add_parser("game", help="Detailed info for one game")
-    game_p.add_argument("app_id", type=int, help="Steam App ID (e.g. 570 for Dota 2)")
+    game_p.add_argument("game_id", help="Steam App ID (e.g. 570) or game name (e.g. 'Dota 2')")
     game_p.set_defaults(func=cmd_game)
 
     # ── list subcommand ────────────────────────────────────────────────────────
     list_p = subparsers.add_parser("list", help="List all games in database")
     list_p.set_defaults(func=cmd_list)
+
+    # ── clear subcommand ───────────────────────────────────────────────────────
+    clear_p = subparsers.add_parser("clear", help="Clear all database data")
+    clear_p.set_defaults(func=cmd_clear)
 
     args = parser.parse_args()
 

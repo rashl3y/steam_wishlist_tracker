@@ -31,8 +31,13 @@ Key concepts:
 
 import requests
 from database import (
-    update_itad_slug, upsert_price, upsert_bundle,
-    mark_game_checked, get_all_games
+    get_all_games,
+    upsert_game,
+    update_itad_slug,
+    mark_game_checked,
+    upsert_price,
+    upsert_historic_low,  # Add this import
+    upsert_bundle,
 )
 
 BASE_URL = "https://api.isthereanydeal.com"
@@ -103,15 +108,7 @@ def lookup_itad_ids(app_ids: list[int], api_key: str) -> dict[int, str]:
 
 
 def fetch_current_prices(itad_ids: list[str], api_key: str) -> dict[str, list]:
-    """
-    Fetch current prices across all stores in GBP.
-
-    Endpoint: POST /games/prices/v2?country=GB
-    Docs: https://docs.isthereanydeal.com/#tag/Games/operation/games-prices-v2
-
-    Returns: {itad_id: [deal, ...]}
-    Each deal: {shop: {id, name}, price: {amount, cut, regular: {amount}}, url}
-    """
+    """Fetch current prices across all stores in GBP."""
     CHUNK_SIZE = 100
     result: dict[str, list] = {}
 
@@ -120,16 +117,27 @@ def fetch_current_prices(itad_ids: list[str], api_key: str) -> dict[str, list]:
 
         resp = requests.post(
             f"{BASE_URL}/games/prices/v2",
-            params={"country": "GB", "key": api_key, "shops": ""},  # empty = all shops
+            params={"country": "GB", "key": api_key, "shops": ""},
             headers=_headers(),
             json=chunk,
             timeout=30,
         )
         resp.raise_for_status()
 
-        for game_data in resp.json():
+        data = resp.json()
+        print(f"[ITAD] Response keys: {data.keys() if isinstance(data, dict) else 'list'}")
+        
+        games = data.get("data", data) if isinstance(data, dict) and "data" in data else data
+        
+        if not isinstance(games, list):
+            raise ValueError(f"Unexpected API response: expected list, got {type(games).__name__}")
+        
+        print(f"[ITAD] Fetched prices for {len(games)} games in this chunk")
+        
+        for game_data in games:
             result[game_data["id"]] = game_data.get("deals", [])
 
+    print(f"[ITAD] Total games with price data: {len(result)}")
     return result
 
 
@@ -211,12 +219,6 @@ def sync_prices(api_key: str) -> None:
     """
     Full ITAD price sync. Fetches current prices, historic lows, and
     bundle history for every game in the database, all in GBP.
-
-    Flow:
-      1. Load all games from DB
-      2. Look up ITAD UUIDs for any new games (cached after first run)
-      3. Batch-fetch prices, historic lows, bundles
-      4. Save everything to DB
     """
     games = get_all_games()
     if not games:
@@ -244,26 +246,12 @@ def sync_prices(api_key: str) -> None:
 
     print(f"[ITAD] Fetching GBP prices for {len(itad_ids)} games...")
 
-    # Each fetch is wrapped individually — a 403 on one (e.g. prices not yet
-    # approved) won't block historic lows or bundles from being fetched.
-    # Once ITAD approves your app, all three will work without any code changes.
     prices_map: dict = {}
     historic_map: dict = {}
     bundles_map: dict = {}
 
     try:
         prices_map = fetch_current_prices(itad_ids, api_key)
-        
-        # Debug: Check specific problem games
-        debug_games = {413150: "Stardew Valley", 1086940: "Baldur's Gate 3"}
-        for app_id, title in debug_games.items():
-            itad_id = steam_to_itad.get(app_id)
-            if itad_id:
-                deals = prices_map.get(itad_id, [])
-                print(f"[ITAD DEBUG] {title}: ITAD returned {len(deals)} deals")
-                if deals:
-                    for deal in deals[:3]:  # Show first 3
-                        print(f"  - {deal.get('shop', {}).get('name')}: £{deal.get('price', {}).get('amount')}")
     except Exception as e:
         _warn_itad(e, "prices")
 
@@ -277,10 +265,12 @@ def sync_prices(api_key: str) -> None:
     except Exception as e:
         _warn_itad(e, "bundles")
 
+    # Cache all game titles once (avoid repeated DB calls)
+    all_games_map = {g['app_id']: g['title'] for g in games}
+
     # ── Save current prices ────────────────────────────────────────────────────
     games_with_no_deals = []
     total_prices_saved = 0
-    debug_single_store_games = []
     
     for itad_id, deals in prices_map.items():
         app_id = itad_to_steam.get(itad_id)
@@ -288,24 +278,22 @@ def sync_prices(api_key: str) -> None:
             continue
         
         if not deals:
-            # Track games that returned empty deals array
             games_with_no_deals.append(app_id)
-        
-        # Track games with suspiciously few stores
-        if len(deals) == 1:
-            debug_single_store_games.append((app_id, deals[0].get("shop", {}).get("name", "unknown")))
+            continue
             
         for deal in deals:
             shop  = deal.get("shop", {}).get("name", "unknown")
             price = deal.get("price", {})
             
-            current = price.get("amount", 0)
-            regular = price.get("regular", {}).get("amount")
+            current = price.get("amount")
+            if current is None:
+                continue
             
-            # If ITAD doesn't provide regular price, use current price as regular
-            # (This happens when there's no discount, or ITAD doesn't track full price)
-            if regular is None or regular == 0:
+            regular = price.get("regular", {}).get("amount")
+            if regular is None:
                 regular = current
+            
+            print(f"[ITAD] Saving: App {app_id} @ {shop} = £{current} (discount {price.get('cut', 0)}%)")
             
             upsert_price(
                 app_id=app_id,
@@ -321,34 +309,38 @@ def sync_prices(api_key: str) -> None:
     print(f"[ITAD] Saved {total_prices_saved} current prices across all games")
     
     # Report games with only 1 store
+    debug_single_store_games = []
+    for itad_id, deals in prices_map.items():
+        if len(deals) == 1:
+            debug_single_store_games.append((itad_to_steam.get(itad_id), deals[0].get("shop", {}).get("name", "unknown")))
+    
     if debug_single_store_games and len(debug_single_store_games) > 5:
-        print(f"[ITAD] ⚠  {len(debug_single_store_games)} games only available from 1 store (may indicate region/licensing issues)")
-        from database import get_all_games
-        all_g = {g['app_id']: g['title'] for g in get_all_games()}
+        print(f"[ITAD] ⚠  {len(debug_single_store_games)} games only available from 1 store")
         print(f"[ITAD]    Examples:")
         for app_id, store in debug_single_store_games[:5]:
-            print(f"[ITAD]    - {all_g.get(app_id, 'Unknown')}: only on {store}")
+            print(f"[ITAD]    - {all_games_map.get(app_id, 'Unknown')}: only on {store}")
     
+    # Report games with no deals
     if games_with_no_deals:
         print(f"[ITAD] ⚠  {len(games_with_no_deals)} games returned no current prices from ITAD:")
-        from database import get_all_games
-        all_g = {g['app_id']: g['title'] for g in get_all_games()}
-        for aid in games_with_no_deals[:10]:  # Show first 10
-            print(f"[ITAD]    - {all_g.get(aid, 'Unknown')} (App ID: {aid})")
+        for aid in games_with_no_deals[:10]:
+            print(f"[ITAD]    - {all_games_map.get(aid, 'Unknown')} (App ID: {aid})")
 
     # ── Save historic lows ─────────────────────────────────────────────────────
     for itad_id, low in historic_map.items():
         app_id = itad_to_steam.get(itad_id)
         if not app_id or not low.get("price"):
             continue
-        upsert_price(
+        
+        print(f"[ITAD] Saving historic low: App {app_id} = £{low['price']} @ {low['shop']}")
+        
+        upsert_historic_low(
             app_id=app_id,
-            store=f"Historic Low — {low['shop']} ({low['date']})",
-            price_current=low["price"],
-            price_regular=low["price"],
+            store=low["shop"],
+            price=low["price"],
             currency="GBP",
             discount_pct=low.get("cut", 0),
-            url=None,
+            recorded_date=low.get("date"),
         )
 
     # ── Save bundles ───────────────────────────────────────────────────────────
@@ -369,7 +361,7 @@ def sync_prices(api_key: str) -> None:
                 bundle_title=bundle.get("title", "Unknown Bundle"),
                 store=bundle.get("type", ""),
                 tier_price=tier_price,
-                currency="USD",  # ITAD bundle prices are always USD
+                currency="USD",
                 bundle_url=bundle.get("url"),
                 expires_at=bundle.get("expiry"),
             )
@@ -378,6 +370,6 @@ def sync_prices(api_key: str) -> None:
         mark_game_checked(app_id)
 
     # Summary
-    games_with_prices = len([g for g in prices_map.values() if g])
+    games_with_prices = sum(1 for g in prices_map.values() if g)
     print(f"[ITAD] ✓ Done. {games_with_prices}/{len(itad_ids)} games had prices available")
     print(f"[ITAD] ✓ Total: {total_prices_saved} prices saved, {len(historic_map)} historic lows, {sum(len(b) for b in bundles_map.values())} bundles")
