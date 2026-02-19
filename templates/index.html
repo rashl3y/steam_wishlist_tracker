@@ -165,10 +165,20 @@
     <span class="search-icon">⌕</span>
     <input type="search" id="search-input" placeholder="Search games..." autocomplete="off">
   </div>
+  
+  <!-- Filter buttons -->
   <button class="filter-toggle" id="filter-sale" data-filter="sale">On Sale</button>
   <button class="filter-toggle" id="filter-50" data-filter="50">50%+ Off</button>
   <button class="filter-toggle" id="filter-75" data-filter="75">75%+ Off</button>
   <button class="filter-toggle" id="filter-bundle" data-filter="bundle">Has Bundle</button>
+  
+  <!-- Sort buttons -->
+  <div style="display:flex; gap:4px; align-items:center; border-left:1px solid var(--border2); padding-left:12px; margin-left:8px;">
+    <span style="font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-dim); font-weight:500;">Sort:</span>
+    <button class="filter-toggle active" id="sort-discount" data-sort="discount">Discount</button>
+    <button class="filter-toggle" id="sort-price" data-sort="price">Price</button>
+    <button class="filter-toggle" id="sort-name" data-sort="name">Name</button>
+  </div>
   
   <div style="position:relative;">
     <button class="filter-toggle" id="exclude-stores-btn" style="min-width:140px;">
@@ -177,6 +187,16 @@
     <div id="store-dropdown" style="display:none; position:absolute; top:100%; left:0; margin-top:4px; background:var(--surface2); border:1px solid var(--border2); border-radius:6px; padding:8px; min-width:200px; z-index:100; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
       <div style="font-size:0.65rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-dim); margin-bottom:8px; padding:0 4px;">Hide stores:</div>
       <div id="store-checkboxes" style="max-height:240px; overflow-y:auto;"></div>
+    </div>
+  </div>
+  
+  <div style="position:relative;">
+    <button class="filter-toggle" id="drm-filter-btn" style="min-width:140px;">
+      DRM Filter <span id="drm-count" style="opacity:0.6;"></span>
+    </button>
+    <div id="drm-dropdown" style="display:none; position:absolute; top:100%; left:0; margin-top:4px; background:var(--surface2); border:1px solid var(--border2); border-radius:6px; padding:8px; min-width:200px; z-index:100; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+      <div style="font-size:0.65rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-dim); margin-bottom:8px; padding:0 4px;">Require DRM:</div>
+      <div id="drm-checkboxes" style="max-height:240px; overflow-y:auto;"></div>
     </div>
   </div>
   
@@ -226,6 +246,9 @@ let allGames = [];
 let activeFilters = new Set();
 let excludedStores = new Set();
 let allStores = new Set();
+let requiredDRM = new Set();  // DRM requirements to filter by
+let allDRM = new Set();       // All unique DRM found
+let sortBy = "discount";  // "name", "price", or "discount"
 
 // ── Load & render deals ────────────────────────────────────────────────────────
 async function loadDeals() {
@@ -236,14 +259,20 @@ async function loadDeals() {
     
     // Extract unique stores from all prices
     allStores.clear();
+    allDRM.clear();
     allGames.forEach(g => {
       (g.prices || []).forEach(p => {
         if (p.store && !p.store.startsWith("Historic Low")) {
           allStores.add(p.store);
         }
+        // Extract DRM from each price
+        if (p.drm) {
+          p.drm.split(",").forEach(d => allDRM.add(d.trim()));
+        }
       });
     });
     populateStoreDropdown();
+    populateDRMDropdown();
     
     renderTable(allGames);
 
@@ -292,15 +321,42 @@ function applyFilters() {
   if (activeFilters.has("75"))     rows = rows.filter(r => r._computed_best_discount >= 75);
   if (activeFilters.has("bundle")) rows = rows.filter(r => (r.num_bundles || 0) > 0);
 
-  // Sort by discount DESC, then price ASC (matching server-side logic)
+  // DRM filter - only show games where at least one price has all required DRM
+  if (requiredDRM.size > 0) {
+    rows = rows.filter(g => {
+      return (g.prices || []).some(p => {
+        if (!p.drm) return false;
+        const gameDRM = new Set(p.drm.split(",").map(d => d.trim()));
+        // Check if all required DRM are in this price's DRM
+        return Array.from(requiredDRM).every(required => gameDRM.has(required));
+      });
+    });
+  }
+
+  // Sort based on selected sort method
   rows.sort((a, b) => {
-    const discA = a._computed_best_discount || 0;
-    const discB = b._computed_best_discount || 0;
-    if (discA !== discB) return discB - discA;  // Higher discount first
-    
-    const priceA = a._computed_best_price || Infinity;
-    const priceB = b._computed_best_price || Infinity;
-    return priceA - priceB;  // Lower price first
+    switch(sortBy) {
+      case "name":
+        // Sort alphabetically by title
+        return a.title.localeCompare(b.title);
+      
+      case "price":
+        // Sort by lowest price
+        const priceA = a._computed_best_price || Infinity;
+        const priceB = b._computed_best_price || Infinity;
+        return priceA - priceB;
+      
+      case "discount":
+      default:
+        // Sort by highest discount, then lowest price
+        const discA = a._computed_best_discount || 0;
+        const discB = b._computed_best_discount || 0;
+        if (discA !== discB) return discB - discA;
+        
+        const priceA2 = a._computed_best_price || Infinity;
+        const priceB2 = b._computed_best_price || Infinity;
+        return priceA2 - priceB2;
+    }
   });
 
   renderTable(rows);
@@ -375,11 +431,21 @@ function renderTable(games) {
     const storeUrl  = bestUrl;
     const isReference = storeName && storeName.startsWith("Reference Price");
     
+    // Build query string for excluded stores and DRM filters
+    const queryParts = [];
+    if (excludedStores.size > 0) {
+      queryParts.push(`exclude=${Array.from(excludedStores).map(encodeURIComponent).join(',')}`);
+    }
+    if (requiredDRM.size > 0) {
+      queryParts.push(`drm=${Array.from(requiredDRM).map(encodeURIComponent).join(',')}`);
+    }
+    const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+    
     return `
       <tr${isReference ? ' style="opacity:0.6;"' : ''}>
         <td class="col-thumb">${thumb}</td>
         <td class="col-title">
-          <a href="/game/${g.app_id}" class="game-title-link">${escHtml(g.title)}</a>
+          <a href="/game/${g.app_id}${queryString}" class="game-title-link">${escHtml(g.title)}</a>
           ${lowBadge}
           ${isReference ? '<div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px;">⚠ No current prices available</div>' : ''}
         </td>
@@ -398,7 +464,7 @@ function renderTable(games) {
         </td>
         <td class="col-bundles">${bundleBadge}</td>
         <td class="col-actions">
-          <a href="/game/${g.app_id}" style="color:var(--text-muted);text-decoration:none;" title="View details">›</a>
+          <a href="/game/${g.app_id}${queryString}" style="color:var(--text-muted);text-decoration:none;" title="View details">›</a>
         </td>
       </tr>`;
   }).join("");
@@ -414,6 +480,19 @@ function escHtml(str) {
 document.querySelectorAll(".filter-toggle").forEach(btn => {
   btn.addEventListener("click", () => {
     const f = btn.dataset.filter;
+    const s = btn.dataset.sort;
+    
+    // Handle sort buttons
+    if (s) {
+      sortBy = s;
+      // Update active state for sort buttons
+      document.querySelectorAll("[data-sort]").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      applyFilters();
+      return;
+    }
+    
+    // Handle filter buttons
     if (activeFilters.has(f)) {
       activeFilters.delete(f);
       btn.classList.remove("active");
@@ -461,15 +540,59 @@ function updateExcludeCount() {
   countEl.textContent = count > 0 ? `(${count})` : '';
 }
 
+function populateDRMDropdown() {
+  const container = document.getElementById("drm-checkboxes");
+  const sorted = Array.from(allDRM).sort();
+  
+  container.innerHTML = sorted.map(drm => `
+    <label style="display:flex; align-items:center; gap:8px; padding:6px 4px; cursor:pointer; font-size:0.75rem; color:var(--text); border-radius:4px;" 
+           onmouseover="this.style.background='rgba(255,255,255,0.05)'" 
+           onmouseout="this.style.background='transparent'">
+      <input type="checkbox" data-drm="${escHtml(drm)}" style="cursor:pointer;">
+      <span>${escHtml(drm || "None")}</span>
+    </label>
+  `).join('');
+  
+  // Add event listeners
+  container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const drm = e.target.dataset.drm;
+      if (e.target.checked) {
+        requiredDRM.add(drm);
+      } else {
+        requiredDRM.delete(drm);
+      }
+      updateDRMCount();
+      applyFilters();
+    });
+  });
+}
+
+function updateDRMCount() {
+  const count = requiredDRM.size;
+  const countEl = document.getElementById("drm-count");
+  countEl.textContent = count > 0 ? `(${count})` : '';
+}
+
 // Dropdown toggle
 document.addEventListener('click', (e) => {
-  const btn = document.getElementById('exclude-stores-btn');
-  const dropdown = document.getElementById('store-dropdown');
+  const storeBtn = document.getElementById('exclude-stores-btn');
+  const storeDropdown = document.getElementById('store-dropdown');
+  const drmBtn = document.getElementById('drm-filter-btn');
+  const drmDropdown = document.getElementById('drm-dropdown');
   
-  if (btn && btn.contains(e.target)) {
-    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-  } else if (dropdown && !dropdown.contains(e.target)) {
-    dropdown.style.display = 'none';
+  if (storeBtn && storeBtn.contains(e.target)) {
+    storeDropdown.style.display = storeDropdown.style.display === 'none' ? 'block' : 'none';
+    drmDropdown.style.display = 'none';
+  } else if (storeDropdown && !storeDropdown.contains(e.target)) {
+    storeDropdown.style.display = 'none';
+  }
+  
+  if (drmBtn && drmBtn.contains(e.target)) {
+    drmDropdown.style.display = drmDropdown.style.display === 'none' ? 'block' : 'none';
+    storeDropdown.style.display = 'none';
+  } else if (drmDropdown && !drmDropdown.contains(e.target)) {
+    drmDropdown.style.display = 'none';
   }
 });
 

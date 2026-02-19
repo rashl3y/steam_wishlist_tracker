@@ -163,6 +163,11 @@
 {% block content %}
 <a href="/" class="back-link">← All Deals</a>
 
+<!-- Filter status banner -->
+<div id="filter-banner" style="display:none; background:var(--surface2); border:1px solid var(--border2); border-left:3px solid var(--amber); border-radius:8px; padding:14px 20px; margin-bottom:20px; font-size:0.78rem; color:var(--amber);">
+  <span>🔍 Filtered stores hidden:</span> <span id="filtered-stores-list" style="font-weight:500;"></span>
+</div>
+
 <!-- Hero section (populated via JS) -->
 <div class="game-hero" id="game-hero">
   <div style="width:280px;height:140px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);"></div>
@@ -211,9 +216,52 @@
 <script>
 const APP_ID = {{ game.app_id }};
 
+// Get excluded stores and required DRM from URL query params
+function getExcludedStores() {
+  const params = new URLSearchParams(window.location.search);
+  const exclude = params.get('exclude');
+  if (!exclude) return new Set();
+  return new Set(exclude.split(',').map(s => decodeURIComponent(s)));
+}
+
+function getRequiredDRM() {
+  const params = new URLSearchParams(window.location.search);
+  const drm = params.get('drm');
+  if (!drm) return new Set();
+  return new Set(drm.split(',').map(d => decodeURIComponent(d)));
+}
+
+const excludedStores = getExcludedStores();
+const requiredDRM = getRequiredDRM();
+
+// Helper function to check if a price has required DRM
+function hasDRM(price, requiredSet) {
+  if (requiredSet.size === 0) return true;
+  if (!price.drm) return false;
+  const priceDRM = new Set(price.drm.split(",").map(d => d.trim()));
+  return Array.from(requiredSet).every(required => priceDRM.has(required));
+}
+
 async function loadGameDetail() {
   const res  = await fetch(`/api/game/${APP_ID}`);
   const data = await res.json();
+
+  // Show filter banner if stores or DRM are filtered
+  if (excludedStores.size > 0 || requiredDRM.size > 0) {
+    const banner = document.getElementById("filter-banner");
+    const storesList = document.getElementById("filtered-stores-list");
+    
+    const parts = [];
+    if (excludedStores.size > 0) {
+      parts.push(`Excluded: ${Array.from(excludedStores).join(", ")}`);
+    }
+    if (requiredDRM.size > 0) {
+      parts.push(`DRM Required: ${Array.from(requiredDRM).join(", ")}`);
+    }
+    
+    storesList.textContent = parts.join(" | ");
+    banner.style.display = "block";
+  }
 
   renderHero(data.game, data.prices);
   renderPrices(data.prices);
@@ -223,8 +271,13 @@ async function loadGameDetail() {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 function renderHero(game, prices) {
-  // Find best price
-  const priced = prices.filter(p => !p.store.startsWith("Historic Low") && p.price_current !== null);
+  // Find best price (excluding filtered stores and respecting DRM requirements)
+  const priced = prices.filter(p => 
+    !p.store.startsWith("Historic Low") && 
+    p.price_current !== null && 
+    !excludedStores.has(p.store) &&
+    hasDRM(p, requiredDRM)
+  );
   const best   = priced.length ? priced.reduce((a, b) => a.price_current < b.price_current ? a : b) : null;
 
   const thumb = game.header_image
@@ -265,8 +318,12 @@ function renderHero(game, prices) {
 function renderPrices(prices) {
   const list = document.getElementById("prices-list");
 
-  // Filter out "historic low" pseudo-entries
-  const current = prices.filter(p => !p.store.startsWith("Historic Low"));
+  // Filter out "historic low" pseudo-entries, excluded stores, and DRM requirements
+  const current = prices.filter(p => 
+    !p.store.startsWith("Historic Low") && 
+    !excludedStores.has(p.store) &&
+    hasDRM(p, requiredDRM)
+  );
   if (!current.length) {
     list.innerHTML = `<div class="no-data">No prices found. Try syncing.</div>`;
     return;
@@ -318,8 +375,11 @@ function renderChart(history) {
     return;
   }
 
-  // Filter out "historic low" metadata entries for the chart
-  const chartData = history.filter(h => !h.store.startsWith("Historic Low"));
+  // Filter out "historic low" metadata entries for the chart AND excluded stores AND DRM
+  const chartData = history.filter(h => 
+    !h.store.startsWith("Historic Low") && 
+    !excludedStores.has(h.store)
+  );
 
   // Group by store so each store is a separate line
   const storeMap = {};
@@ -339,6 +399,15 @@ function renderChart(history) {
     fill:            false,
     borderWidth:     2,
   }));
+  
+  // If no data after filtering, show message
+  if (datasets.length === 0) {
+    ctx.fillStyle = "rgba(100,116,139,0.4)";
+    ctx.font = "13px 'DM Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("No price history for selected stores", ctx.canvas.width / 2, ctx.canvas.height / 2);
+    return;
+  }
 
   new Chart(ctx, {
     type: "line",

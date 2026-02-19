@@ -108,198 +108,129 @@ def lookup_itad_ids(app_ids: list[int], api_key: str) -> dict[int, str]:
     return result
 
 
-def fetch_current_prices(itad_ids: list[str], api_key: str) -> dict[str, list]:
-    """Fetch current prices across all stores in GBP."""
+def fetch_all_data(itad_ids: list[str], api_key: str) -> tuple[dict, dict, dict]:
+    """
+    Fetch all game data using prices/v3 endpoint.
+    
+    prices/v3 returns:
+    - deals: All current prices from all shops
+    - historyLow: Historic low prices (all, y1, m3)
+    - Plus all shop data in one call
+    
+    Then fetch bundles separately from overview/v2.
+    
+    Returns: (prices_map, historic_map, bundles_map)
+    """
     CHUNK_SIZE = 100
-    result: dict[str, list] = {}
+    prices_map: dict[str, list] = {}
+    historic_map: dict[str, dict] = {}
+    bundles_map: dict[str, list] = {}
     all_stores_found = set()
 
     for i in range(0, len(itad_ids), CHUNK_SIZE):
         chunk = itad_ids[i:i + CHUNK_SIZE]
 
-        resp = requests.post(
-            f"{BASE_URL}/games/prices/v2",
-            # Include explicit shop IDs to ensure we get all stores
-            params={
-                "country": "GB", 
-                "key": api_key,
-                "shops": "1,13,14,18,20,23,24,25,26,28,31,33,36,37,38,39,40,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,61"
-            },
-            headers=_headers(),
-            json=chunk,
-            timeout=30,
-        )
-        resp.raise_for_status()
-
-        data = resp.json()
-        
-        # Handle different response structures
-        if isinstance(data, dict) and "data" in data:
-            games = data["data"]
-        elif isinstance(data, list):
-            games = data
-        else:
-            raise ValueError(f"Unexpected API response: expected list or dict with 'data', got {type(data).__name__}")
-        
-        if not isinstance(games, list):
-            raise ValueError(f"Unexpected API response: expected list, got {type(games).__name__}")
-        
-        # Track stores in this chunk
-        chunk_stores = set()
-        
-        for game_data in games:
-            game_id = game_data.get("id", "unknown")
-            deals = game_data.get("deals", [])
-            
-            for deal in deals:
-                shop_name = deal.get("shop", {}).get("name", "Unknown")
-                chunk_stores.add(shop_name)
-                all_stores_found.add(shop_name)
-            
-            result[game_id] = deals
-        
-        # Log progress with stores found
-        chunk_num = (i // CHUNK_SIZE) + 1
-        print(f"[ITAD] Chunk {chunk_num}: {len(games)} games, {len(chunk_stores)} unique stores")
-        if chunk_stores:
-            print(f"[ITAD]   Stores: {', '.join(sorted(chunk_stores))}")
-
-    print(f"[ITAD] Total: {len(result)} games, {len(all_stores_found)} unique stores across all chunks")
-    if all_stores_found:
-        print(f"[ITAD] All stores found: {', '.join(sorted(all_stores_found))}")
-    
-    return result
-
-
-def fetch_historic_lows(itad_ids: list[str], api_key: str) -> dict[str, dict]:
-    """
-    Fetch the all-time lowest recorded price per game in GBP.
-
-    Endpoint: POST /games/historylow/v1?country=GB
-    Docs: https://docs.isthereanydeal.com/#tag/Games/operation/games-historylow-v1
-
-    Returns: {itad_id: {shop, price, cut, date}}
-    """
-    CHUNK_SIZE = 100
-    result: dict[str, dict] = {}
-    games_with_no_low = 0
-
-    for i in range(0, len(itad_ids), CHUNK_SIZE):
-        chunk = itad_ids[i:i + CHUNK_SIZE]
-
+        # ══ CALL 1: Fetch prices/v3 - includes all shops and historic low ══
         try:
-            resp = requests.post(
-                f"{BASE_URL}/games/historylow/v1",
+            resp_prices = requests.post(
+                f"{BASE_URL}/games/prices/v3",
                 params={
                     "country": "GB", 
-                    "key": api_key,
-                    "shops": "1,13,14,18,20,23,24,25,26,28,31,33,36,37,38,39,40,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,61"
+                    "key": api_key
                 },
                 headers=_headers(),
                 json=chunk,
                 timeout=30,
             )
-            resp.raise_for_status()
+            resp_prices.raise_for_status()
+
+            data_prices = resp_prices.json()
+            
+            # prices/v3 returns a list of games
+            if isinstance(data_prices, list):
+                prices_list = data_prices
+            else:
+                prices_list = []
+            
+            chunk_stores = set()
+            chunk_with_lows = 0
+            
+            # Extract current prices AND historic lows
+            for price_entry in prices_list:
+                game_id = price_entry.get("id")
+                if not game_id:
+                    continue
+                
+                # === CURRENT PRICES: deals array has all shops ===
+                deals = price_entry.get("deals", [])
+                if deals:
+                    for deal in deals:
+                        shop_name = deal.get("shop", {}).get("name", "Unknown")
+                        chunk_stores.add(shop_name)
+                        all_stores_found.add(shop_name)
+                    
+                    if game_id not in prices_map:
+                        prices_map[game_id] = []
+                    prices_map[game_id].extend(deals)
+                
+                # === HISTORIC LOW: historyLow.all ===
+                history_low = price_entry.get("historyLow", {})
+                if history_low:
+                    low_data = history_low.get("all")  # all-time low
+                    if low_data and low_data.get("amount") is not None:
+                        chunk_with_lows += 1
+                        # For historic low, we need to find which shop had it
+                        # Use the storeLow from deals or mark as "Historic Low"
+                        historic_map[game_id] = {
+                            "shop": "Historic Low",
+                            "price": low_data.get("amount"),
+                            "cut": 0,  # Historic low percentage is always 0
+                            "date": "",  # prices/v3 doesn't include historic low timestamp
+                        }
+            
+            chunk_num = (i // CHUNK_SIZE) + 1
+            print(f"[ITAD] Chunk {chunk_num}: {len(prices_list)} games, {len(chunk_stores)} unique stores")
+            if chunk_stores:
+                print(f"[ITAD]   Stores: {', '.join(sorted(chunk_stores))}")
+            print(f"[ITAD]   Historic lows: {chunk_with_lows}/{len(prices_list)}")
+        
         except Exception as e:
-            _warn_itad(e, f"historic lows (chunk {(i // CHUNK_SIZE) + 1})")
-            continue
+            _warn_itad(e, f"prices/v3 (chunk {(i // CHUNK_SIZE) + 1})")
 
-        # Parse response - could be list or dict with data key
-        data = resp.json()
+        # ══ CALL 2: Fetch bundles from overview/v2 ══
+        try:
+            resp_overview = requests.post(
+                f"{BASE_URL}/games/overview/v2",
+                params={
+                    "country": "GB", 
+                    "key": api_key
+                },
+                headers=_headers(),
+                json=chunk,
+                timeout=30,
+            )
+            resp_overview.raise_for_status()
+
+            data_overview = resp_overview.json()
+            bundles_list = data_overview.get("bundles", [])
+            
+            # Extract bundles
+            for bundle in bundles_list:
+                game_id = bundle.get("id")
+                if game_id:
+                    if game_id not in bundles_map:
+                        bundles_map[game_id] = []
+                    bundles_map[game_id].append(bundle)
         
-        # Handle both response formats
-        if isinstance(data, dict) and "data" in data:
-            items = data["data"]
-        elif isinstance(data, list):
-            items = data
-        else:
-            print(f"[ITAD] Warning: Unexpected historic lows response format: {type(data).__name__}")
-            continue
-        
-        if not isinstance(items, list):
-            print(f"[ITAD] Warning: Expected list of historic lows, got {type(items).__name__}")
-            continue
+        except Exception as e:
+            _warn_itad(e, f"bundles (chunk {(i // CHUNK_SIZE) + 1})")
 
-        chunk_num = (i // CHUNK_SIZE) + 1
-        chunk_with_lows = 0
-
-        for item in items:
-            if not item:
-                continue
-            
-            game_id = item.get("id")
-            if not game_id:
-                continue
-            
-            low = item.get("low")
-            
-            # Check if game has a historic low
-            if not low:
-                games_with_no_low += 1
-                continue
-            
-            # Extract low data
-            price_data = low.get("price", {})
-            price = price_data.get("amount")
-            
-            if price is None:
-                # Low exists but no price
-                continue
-            
-            chunk_with_lows += 1
-            result[game_id] = {
-                "shop":  low.get("shop", {}).get("name", "Unknown"),
-                "price": price,
-                "cut":   price_data.get("cut", 0),
-                "date":  (low.get("timestamp") or "")[:10],
-            }
-
-        print(f"[ITAD] Historic lows chunk {chunk_num}: {chunk_with_lows}/{len(chunk)} games have recorded lows")
-
-    print(f"[ITAD] Total historic lows: {len(result)} | Games with no low: {games_with_no_low}")
-    return result
-
-
-def fetch_bundles(itad_ids: list[str], api_key: str) -> dict[str, list]:
-    """
-    Fetch bundle history for each game.
-
-    Endpoint: GET /games/bundles/v2?id=UUID1&id=UUID2...
-    Docs: https://docs.isthereanydeal.com/#tag/Games/operation/games-bundles-v2
-
-    Note: This endpoint uses GET with repeated ?id= params (not a POST JSON body),
-    so we pass each UUID as a separate param. Chunked to avoid URL length limits.
-
-    Bundle tier prices are returned in USD regardless of the country param.
-    """
-    CHUNK_SIZE = 50  # smaller â€” GET params have URL length limits
-    result: dict[str, list] = {}
-
-    for i in range(0, len(itad_ids), CHUNK_SIZE):
-        chunk = itad_ids[i:i + CHUNK_SIZE]
-
-        # Build params list with key first, then all the id params, then shops
-        params = [
-            ("key", api_key),
-            ("shops", "1,13,14,18,20,23,24,25,26,28,31,33,36,37,38,39,40,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,61")
-        ] + [("id", iid) for iid in chunk]
-        
-        resp = requests.get(
-            f"{BASE_URL}/games/bundles/v2",
-            params=params,
-            headers=_headers(),
-            timeout=30,
-        )
-        resp.raise_for_status()
-
-        for item in resp.json():
-            bundles = item.get("bundles", [])
-            if bundles:
-                result[item["id"]] = bundles
-
-    return result
-
-
+    print(f"\n[ITAD] Total: {len(prices_map)} games with prices, {len(historic_map)} with historic lows, {len(bundles_map)} with bundles")
+    print(f"[ITAD] Unique stores found: {len(all_stores_found)}")
+    if all_stores_found:
+        print(f"[ITAD]   {', '.join(sorted(all_stores_found))}")
+    
+    return prices_map, historic_map, bundles_map
 def _recalculate_discounts_from_steam(app_id: int) -> None:
     """
     Recalculate all discounts for a game using Steam's original price as baseline.
@@ -395,24 +326,12 @@ def sync_prices(api_key: str) -> None:
 
     print(f"[ITAD] Fetching GBP prices for {len(itad_ids)} games...")
 
-    prices_map: dict = {}
-    historic_map: dict = {}
-    bundles_map: dict = {}
-
+    # Two efficient API calls get all data (prices, historic lows, bundles)
     try:
-        prices_map = fetch_current_prices(itad_ids, api_key)
+        prices_map, historic_map, bundles_map = fetch_all_data(itad_ids, api_key)
     except Exception as e:
-        _warn_itad(e, "prices")
-
-    try:
-        historic_map = fetch_historic_lows(itad_ids, api_key)
-    except Exception as e:
-        _warn_itad(e, "historic lows")
-
-    try:
-        bundles_map = fetch_bundles(itad_ids, api_key)
-    except Exception as e:
-        _warn_itad(e, "bundles")
+        _warn_itad(e, "data fetch")
+        return
 
     # Cache all game titles once (avoid repeated DB calls)
     all_games_map = {g['app_id']: g['title'] for g in games}
@@ -455,12 +374,14 @@ def sync_prices(api_key: str) -> None:
             if current is None:
                 continue
             
-            regular = price.get("regular", {}).get("amount")
-            if regular is None:
-                # For ITAD: use Steam's baseline if available
-                regular = steam_baseline
+            # Use Steam's baseline for all ITAD prices (not ITAD's regular field)
+            regular = steam_baseline
             
-            print(f"[ITAD] Saving: App {app_id} @ {shop} = Â£{current} (discount {price.get('cut', 0)}%)")
+            # Extract DRM requirements (comma-separated list of DRM names)
+            drm_list = deal.get("drm", [])
+            drm_str = ",".join([d.get("name", "Unknown") for d in drm_list]) if drm_list else None
+            
+            print(f"[ITAD] Saving: App {app_id} @ {shop} = £{current} (discount {deal.get('cut', 0)}%)")
             
             upsert_price(
                 app_id=app_id,
@@ -470,6 +391,7 @@ def sync_prices(api_key: str) -> None:
                 currency="GBP",
                 discount_pct=0,  # Will be recalculated properly based on Steam baseline
                 url=deal.get("url"),
+                drm=drm_str,
             )
             total_prices_saved += 1
     

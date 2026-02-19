@@ -2,13 +2,13 @@
 database.py
 -----------
 SQLite schema and all database operations.
-All prices stored and displayed in GBP (£).
+All prices stored and displayed in GBP (Â£).
 
 Tables:
-  games         → wishlist items from Steam
-  prices        → latest price per game per store
-  price_history → full append-only price log (for historic lows)
-  bundles       → bundle appearances (Humble, Fanatical, etc.)
+  games         â†’ wishlist items from Steam
+  prices        â†’ latest price per game per store
+  price_history â†’ full append-only price log (for historic lows)
+  bundles       â†’ bundle appearances (Humble, Fanatical, etc.)
 """
 
 from datetime import datetime, timezone
@@ -51,11 +51,12 @@ def init_db() -> None:
             currency        TEXT    DEFAULT 'GBP',
             discount_pct    INTEGER DEFAULT 0,
             url             TEXT,
+            drm             TEXT,
             fetched_at      TEXT    DEFAULT (datetime('now')),
             UNIQUE(app_id, store)
         );
 
-        -- Append-only log — never deleted, used for historic low calculation
+        -- Append-only log â€” never deleted, used for historic low calculation
         CREATE TABLE IF NOT EXISTS price_history (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             app_id          INTEGER NOT NULL REFERENCES games(app_id) ON DELETE CASCADE,
@@ -83,7 +84,7 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_bundles_app   ON bundles(app_id);
     """)
 
-    # Historic lows table — tracks all-time lowest prices
+    # Historic lows table â€” tracks all-time lowest prices
     conn.execute("""
         CREATE TABLE IF NOT EXISTS historic_lows (
             id INTEGER PRIMARY KEY,
@@ -115,7 +116,7 @@ def clear_database() -> None:
     init_db()
 
 
-# ── GAME CRUD ──────────────────────────────────────────────────────────────────
+# â”€â”€ GAME CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def upsert_game(app_id: int, title: str, steam_url: str = None, header_image: str = None) -> None:
     conn = get_connection()
@@ -160,29 +161,30 @@ def delete_game(app_id: int) -> None:
     conn.close()
 
 
-# ── PRICE CRUD ─────────────────────────────────────────────────────────────────
+# â”€â”€ PRICE CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def upsert_price(app_id: int, store: str, price_current: float,
                  price_regular: float, currency: str = "GBP",
-                 discount_pct: int = 0, url: str = None) -> None:
+                 discount_pct: int = 0, url: str = None, drm: str = None) -> None:
     """
     Save latest price AND log to history.
-    currency should always be 'GBP' — conversion happens before this call.
+    currency should always be 'GBP' â€” conversion happens before this call.
     """
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
 
     conn.execute("""
-        INSERT INTO prices (app_id, store, price_current, price_regular, currency, discount_pct, url, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO prices (app_id, store, price_current, price_regular, currency, discount_pct, url, drm, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(app_id, store) DO UPDATE SET
             price_current = excluded.price_current,
             price_regular = excluded.price_regular,
             currency      = excluded.currency,
             discount_pct  = excluded.discount_pct,
             url           = excluded.url,
+            drm           = excluded.drm,
             fetched_at    = excluded.fetched_at
-    """, (app_id, store, price_current, price_regular, currency, discount_pct, url, now))
+    """, (app_id, store, price_current, price_regular, currency, discount_pct, url, drm, now))
 
     conn.execute("""
         INSERT INTO price_history (app_id, store, price, currency, discount_pct, recorded_at)
@@ -242,7 +244,7 @@ def upsert_bundle(app_id: int, bundle_title: str, store: str = None,
     conn.close()
 
 
-# ── REPORTS ────────────────────────────────────────────────────────────────────
+# â”€â”€ REPORTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def get_deals_report() -> list[dict]:
     """
@@ -294,7 +296,7 @@ def get_all_prices_for_game(app_id: int) -> list[dict]:
     """All current store prices for a single game."""
     conn = get_connection()
     rows = conn.execute("""
-        SELECT store, price_current, price_regular, currency, discount_pct, url, fetched_at
+        SELECT store, price_current, price_regular, currency, discount_pct, url, drm, fetched_at
         FROM prices WHERE app_id = ?
         ORDER BY price_current ASC
     """, (app_id,)).fetchall()
