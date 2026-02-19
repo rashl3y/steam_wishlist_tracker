@@ -38,7 +38,7 @@ Your Steam profile must be **Public** for the wishlist API to work.
 python app.py
 ```
 
-Open **http://localhost:5000** in your browser.
+Open **http://localhost:8080** in your browser.
 
 Enter your keys on the **Sync** page and click **Start Full Sync**.
 
@@ -114,7 +114,7 @@ Set Steam → Privacy Settings → Profile & Game Details → **Public**
 **ITAD returns no prices**
 Verify your key at https://isthereanydeal.com/dev/keys/ — free keys have rate limits but no paywalls.
 
-**Port 5000 in use**
+**Port 8080 in use**
 ```bash
 python app.py  # edit the port in app.py → app.run(port=5001)
 ```
