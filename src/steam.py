@@ -17,7 +17,7 @@ How to get your Steam API key:
 How to find your Steam ID:
   â†’ Open Steam â†’ Profile â†’ Copy URL
   â†’ If it's a custom URL like /id/username, visit:
-    https://www.steamidfinder.com to convert to a numeric SteamID64
+    https://steamdb.info/calculator/ to convert to a numeric SteamID64
 """
 
 import requests
