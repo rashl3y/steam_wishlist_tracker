@@ -3,12 +3,6 @@ loaded_bs4.py
 -------------
 Scrapes game prices from loaded.com using BeautifulSoup (lightweight & fast).
 
-Why BeautifulSoup instead of Selenium?
-- Faster (no browser overhead)
-- Simpler (no browser automation complexity)
-- Lighter (no 150MB Chrome driver)
-- Still works well for Loaded.com (mostly static HTML)
-
 Handles title matching issues:
 - URLs don't always match exact game titles
 - Uses fuzzy matching to find the right page

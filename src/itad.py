@@ -13,7 +13,7 @@ Authentication:
   passed as a Bearer token in the Authorization header.
 
   OAuth2 (Authorization Code + PKCE) is only needed for user-specific
-  endpoints like Waitlist and Collection â€” we don't use those here.
+  endpoints like Waitlist and Collection we don't use those here.
 
 How to get your free API key:
   https://isthereanydeal.com/apps/my/
@@ -24,7 +24,7 @@ API documentation:
 
 Key concepts:
   - ITAD identifies games by internal UUIDs, not Steam App IDs.
-  - We first convert Steam App ID â†’ ITAD UUID via the lookup endpoint.
+  - We first convert Steam App ID ITAD UUID via the lookup endpoint.
   - That UUID is then used for all price/bundle queries.
   - UUIDs are cached in the DB (itad_slug column) so we only look them up once.
 """
@@ -57,7 +57,7 @@ def _warn_itad(err: Exception, what: str) -> None:
         print(f"[ITAD]    Email api@isthereanydeal.com to request access.")
         print(f"[ITAD]    Once approved, this will work automatically.")
     else:
-        print(f"[ITAD] âš   {what} failed: {err}")
+        print(f"[ITAD]  {what} failed: {err}")
 
 
 def _headers() -> dict:

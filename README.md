@@ -27,7 +27,7 @@ Python 3.10+ required.
 | Key | Where |
 |---|---|
 | **Steam API Key** | https://steamcommunity.com/dev/apikey |
-| **Steam ID64** | https://www.steamidfinder.com (your 17-digit ID) |
+| **Steam ID64** | https://steamdb.info/calculator/ (your 17-digit ID) |
 | **ITAD API Key** | https://isthereanydeal.com/dev/app/ (free) |
 
 Your Steam profile must be **Public** for the wishlist API to work.
@@ -38,7 +38,7 @@ Your Steam profile must be **Public** for the wishlist API to work.
 python app.py
 ```
 
-Open **http://localhost:5000** in your browser.
+Open **http://localhost:8080** in your browser.
 
 Enter your keys on the **Sync** page and click **Start Full Sync**.
 
@@ -65,22 +65,24 @@ python main.py game 1091500
 ```
 wishlist-tracker/
 │
-├── app.py               ← Flask web server (start here)
-├── main.py              ← CLI entry point
+├── app.py                    ← Flask web server (start here)
+├── main.py                   ← CLI entry point
 ├── requirements.txt
 ├── data/
-│   └── wishlist.db      ← SQLite database (auto-created)
+│   └── wishlist.db           ← SQLite database (auto-created)
 │
 ├── templates/
-│   ├── base.html        ← Shared layout, nav, styles
-│   ├── index.html       ← Deals dashboard
-│   ├── game.html        ← Game detail + chart + bundles
-│   └── settings.html    ← Sync / API key page
+│   ├── base.html             ← Shared layout, nav, styles
+│   ├── index.html            ← Deals dashboard
+│   ├── game.html             ← Game detail + chart + bundles
+│   └── settings.html         ← Sync / API key page
 │
 └── src/
-    ├── database.py      ← Schema + all SQL queries
-    ├── steam.py         ← Steam API integration
-    ├── itad.py          ← ITAD API (prices, lows, bundles) — GBP via country=GB
+    ├── database.py           ← Schema + all SQL queries
+    ├── steam.py              ← Steam API integration
+    ├── itad.py               ← ITAD API (prices, lows, bundles) — GBP via country=GB
+    ├── loaded_bs4.py         ← Scrapes game prices and DRM info from Loaded.com using BeautifulSoup
+    ├── sync_loaded_helper.py ← Syncs prices from loaded_bs4.py
 ```
 
 ---

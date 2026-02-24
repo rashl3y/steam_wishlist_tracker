@@ -43,7 +43,7 @@ from itad import sync_prices
 from sync_loaded_helper import sync_loaded
 
 
-# â”€â”€ ANSI colour codes for terminal output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ANSI colour codes for terminal output
 # These are escape codes that terminals interpret as colours.
 # "\033[" starts the sequence, "m" ends it, "0m" resets to default.
 GREEN  = "\033[92m"
@@ -289,7 +289,7 @@ def cmd_clear(args) -> None:
 # CLI setup
 
 def main():
-    # init_db() is safe to call every run â€” creates tables only if missing
+    # init_db() is safe to call every run creates tables only if missing
     init_db()
 
     parser = argparse.ArgumentParser(
