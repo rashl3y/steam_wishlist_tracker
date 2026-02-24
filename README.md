@@ -116,7 +116,7 @@ Set Steam → Privacy Settings → Profile & Game Details → **Public**
 **ITAD returns no prices**
 Verify your key at https://isthereanydeal.com/dev/keys/ — free keys have rate limits but no paywalls.
 
-**Port 5000 in use**
+**Port 8080 in use**
 ```bash
 python app.py  # edit the port in app.py → app.run(port=5001)
 ```
