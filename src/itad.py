@@ -4,27 +4,27 @@ itad.py
 Fetches price data from IsThereAnyDeal (ITAD) API (current version).
 
 ITAD tracks prices across 30+ PC game stores and provides:
-  âœ“ Current prices across all stores
-  âœ“ Historic low prices
-  âœ“ Bundle history
+  Current prices across all stores
+  Historic low prices
+  Bundle history
 
 Authentication:
   Most public endpoints (prices, lookups, bundles) use a plain API key
   passed as a Bearer token in the Authorization header.
 
   OAuth2 (Authorization Code + PKCE) is only needed for user-specific
-  endpoints like Waitlist and Collection â€” we don't use those here.
+  endpoints like Waitlist and Collection we don't use those here.
 
 How to get your free API key:
-  â†’ https://isthereanydeal.com/apps/my/
-  Register an app â†’ your key and OAuth credentials are generated automatically.
+  https://isthereanydeal.com/apps/my/
+  Register an app your key and OAuth credentials are generated automatically.
 
 API documentation:
-  â†’ https://docs.isthereanydeal.com/
+  https://docs.isthereanydeal.com/
 
 Key concepts:
   - ITAD identifies games by internal UUIDs, not Steam App IDs.
-  - We first convert Steam App ID â†’ ITAD UUID via the lookup endpoint.
+  - We first convert Steam App ID ITAD UUID via the lookup endpoint.
   - That UUID is then used for all price/bundle queries.
   - UUIDs are cached in the DB (itad_slug column) so we only look them up once.
 """
@@ -53,15 +53,15 @@ def _warn_itad(err: Exception, what: str) -> None:
     """
     msg = str(err)
     if "403" in msg:
-        print(f"[ITAD] âš   {what} skipped â€” endpoint not yet approved.")
+        print(f"[ITAD]    {what} skipped endpoint not yet approved.")
         print(f"[ITAD]    Email api@isthereanydeal.com to request access.")
         print(f"[ITAD]    Once approved, this will work automatically.")
     else:
-        print(f"[ITAD] âš   {what} failed: {err}")
+        print(f"[ITAD]  {what} failed: {err}")
 
 
 def _headers() -> dict:
-    """Standard headers for ITAD requests (no auth â€” key goes in query params)."""
+    """Standard headers for ITAD requests (no auth key goes in query params)."""
     return {"Content-Type": "application/json"}
 
 
@@ -86,7 +86,7 @@ def lookup_itad_ids(app_ids: list[int], api_key: str) -> dict[int, str]:
 
     for i in range(0, len(app_ids), CHUNK_SIZE):
         chunk_ids = app_ids[i:i + CHUNK_SIZE]
-        # Format: "app/{steam_app_id}" â€” ITAD's shop ID format for Steam
+        # Format: "app/{steam_app_id}" ITAD's shop ID format for Steam
         payload = [f"app/{aid}" for aid in chunk_ids]
 
         resp = requests.post(
@@ -350,7 +350,7 @@ def sync_prices(api_key: str) -> None:
     except Exception as e:
         print(f"[ITAD] Warning: Could not load Steam baselines: {e}")
 
-    # â”€â”€ Save current prices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save current prices
     games_with_no_deals = []
     total_prices_saved = 0
     
@@ -404,24 +404,24 @@ def sync_prices(api_key: str) -> None:
             debug_single_store_games.append((itad_to_steam.get(itad_id), deals[0].get("shop", {}).get("name", "unknown")))
     
     if debug_single_store_games and len(debug_single_store_games) > 5:
-        print(f"[ITAD] âš   {len(debug_single_store_games)} games only available from 1 store")
-        print(f"[ITAD]    Examples:")
+        print(f"[ITAD]  {len(debug_single_store_games)} games only available from 1 store")
+        print(f"[ITAD]  Examples:")
         for app_id, store in debug_single_store_games[:5]:
             print(f"[ITAD]    - {all_games_map.get(app_id, 'Unknown')}: only on {store}")
     
     # Report games with no deals
     if games_with_no_deals:
-        print(f"[ITAD] âš   {len(games_with_no_deals)} games returned no current prices from ITAD:")
+        print(f"[ITAD]  {len(games_with_no_deals)} games returned no current prices from ITAD:")
         for aid in games_with_no_deals[:10]:
             print(f"[ITAD]    - {all_games_map.get(aid, 'Unknown')} (App ID: {aid})")
 
-    # â”€â”€ Save historic lows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save historic lows
     for itad_id, low in historic_map.items():
         app_id = itad_to_steam.get(itad_id)
         if not app_id or not low.get("price"):
             continue
         
-        print(f"[ITAD] Saving historic low: App {app_id} = Â£{low['price']} @ {low['shop']}")
+        print(f"[ITAD] Saving historic low: App {app_id} = {low['price']} @ {low['shop']}")
         
         upsert_historic_low(
             app_id=app_id,
@@ -432,7 +432,7 @@ def sync_prices(api_key: str) -> None:
             recorded_date=low.get("date"),
         )
 
-    # â”€â”€ Save bundles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save bundles
     for itad_id, bundle_list in bundles_map.items():
         app_id = itad_to_steam.get(itad_id)
         if not app_id:
@@ -455,7 +455,7 @@ def sync_prices(api_key: str) -> None:
                 expires_at=bundle.get("expiry"),
             )
 
-    # â"€â"€ Recalculate discounts based on Steam baseline â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    # Recalculate discounts based on Steam baseline
     print(f"\n[ITAD] Recalculating discounts based on Steam prices...")
     for app_id in steam_to_itad.keys():
         _recalculate_discounts_from_steam(app_id)
@@ -465,5 +465,72 @@ def sync_prices(api_key: str) -> None:
 
     # Summary
     games_with_prices = sum(1 for g in prices_map.values() if g)
-    print(f"[ITAD] âœ“ Done. {games_with_prices}/{len(itad_ids)} games had prices available")
-    print(f"[ITAD] âœ“ Total: {total_prices_saved} prices saved, {len(historic_map)} historic lows, {sum(len(b) for b in bundles_map.values())} bundles")
+    print(f"[ITAD] Done. {games_with_prices}/{len(itad_ids)} games had prices available")
+    print(f"[ITAD] Total: {total_prices_saved} prices saved, {len(historic_map)} historic lows, {sum(len(b) for b in bundles_map.values())} bundles")
+
+
+def sync_loaded(steam_id_to_title: dict = None) -> None:
+    """
+    Sync prices from loaded.com for games in the database.
+    
+    loaded.com is a UK game key reseller with good prices.
+    We scrape the prices and save them to the database.
+    
+    Args:
+        steam_id_to_title: Optional dict of {app_id: game_title} to sync
+                          If None, syncs all games in database
+    """
+    import time
+    from loaded import scrape_game_price
+    
+    if steam_id_to_title is None:
+        # Get all games from database
+        games = get_all_games()
+        steam_id_to_title = {g["app_id"]: g["title"] for g in games}
+    
+    if not steam_id_to_title:
+        print("[Loaded] No games to sync")
+        return
+    
+    print(f"\n[Loaded] Scraping prices for {len(steam_id_to_title)} games...")
+    
+    prices_saved = 0
+    not_found = []
+    
+    for i, (app_id, title) in enumerate(steam_id_to_title.items(), 1):
+        try:
+            result = scrape_game_price(title, platform="pc", drm="steam")
+            
+            if result:
+                from database import upsert_price
+                
+                upsert_price(
+                    app_id=app_id,
+                    store="Loaded",
+                    price_current=result["price"],
+                    price_regular=result["regular_price"],
+                    currency=result["currency"],
+                    discount_pct=result["discount_pct"],
+                    url=result["url"],
+                    drm=result["drm"],
+                )
+                prices_saved += 1
+            else:
+                not_found.append(title)
+        
+        except Exception as e:
+            print(f"[Loaded] Error processing {title}: {e}")
+            not_found.append(title)
+        
+        # Delay between requests (rate limiting is also done in loaded.py)
+        if i < len(steam_id_to_title):
+            time.sleep(2)
+    
+    print(f"[Loaded] ✓ Saved {prices_saved}/{len(steam_id_to_title)} prices")
+    
+    if not_found and len(not_found) <= 10:
+        print(f"[Loaded] ⚠  Not found ({len(not_found)}):")
+        for title in not_found[:10]:
+            print(f"[Loaded]   - {title}")
+    elif not_found:
+        print(f"[Loaded] ⚠  {len(not_found)} games not found on Loaded")

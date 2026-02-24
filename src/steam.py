@@ -15,8 +15,10 @@ How to get your Steam API key:
   (Log in, enter any domain name, copy the key)
 
 How to find your Steam ID:
-  â†’ Open Steam â†’ Profile â†’ Copy URL
-  â†’ If it's a custom URL like /id/username, visit:
+  Open Steam Profile Copy URL
+  If it's a custom URL like /id/username, visit:
+  Open Steam Profile Copy URL
+  If it's a custom URL like /id/username, visit:
     https://steamdb.info/calculator/ to convert to a numeric SteamID64
 """
 
@@ -45,7 +47,7 @@ def fetch_wishlist_app_ids(steam_id: str, api_key: str) -> list[int]:
     params = {
         "key": api_key,
         "steamid": steam_id,
-        "count": 5000,   # max items â€” raise if you have a very large wishlist
+        "count": 5000,   # max items raise if you have a very large wishlist
     }
 
     print("[Steam] Fetching wishlist app IDs...")
@@ -56,11 +58,11 @@ def fetch_wishlist_app_ids(steam_id: str, api_key: str) -> list[int]:
 
     data = resp.json()
 
-    # The response nests under response â†’ items â†’ appid
+    # The response nests under response items appid
     items = data.get("response", {}).get("items", [])
 
     if not items:
-        print("[Steam] âš  No wishlist items found. Check your Steam ID and privacy settings.")
+        print("[Steam] No wishlist items found. Check your Steam ID and privacy settings.")
         print("        Your Steam profile and game details must be set to Public.")
         return []
 
@@ -81,7 +83,7 @@ def fetch_app_details(app_id: int) -> dict | None:
     """
     params = {
         "appids": app_id,
-        "cc": "gb",    # country code â€” affects prices shown
+        "cc": "gb",    # country code affects prices shown
         "l": "en",
     }
 
@@ -97,7 +99,7 @@ def fetch_app_details(app_id: int) -> dict | None:
 
     info = app_data.get("data", {})
 
-    # Filter to games only â€” skip DLCs, soundtracks, tools
+    # Filter to games only skip DLCs, soundtracks, tools
     if info.get("type") != "game":
         return None
 
@@ -161,7 +163,7 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
         details = fetch_app_details(app_id)
 
         if details is None:
-            print("â­  Skipped (not a game or unavailable)")
+            print("Skipped (not a game or unavailable)")
         else:
             upsert_game(
                 app_id=app_id,
@@ -183,7 +185,7 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
                 )
             
             saved.append(app_id)
-            print(f"âœ“ {details['name']}")
+            print(f"{details['name']}")
 
         # Be polite to Steam's servers
         time.sleep(RATE_LIMIT_DELAY)

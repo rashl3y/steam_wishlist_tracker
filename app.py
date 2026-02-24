@@ -7,14 +7,14 @@ Run with: python app.py
 Then open: http://localhost:8080
 
 Routes:
-  GET  /                     â†’ dashboard (deals table)
-  GET  /game/<app_id>        â†’ game detail page
-  POST /api/sync/steam       â†’ trigger Steam wishlist sync
-  POST /api/sync/itad        â†’ trigger ITAD price sync
-  GET  /api/games            â†’ JSON: all games + deals
-  GET  /api/game/<app_id>    â†’ JSON: game detail with prices + bundles + history
-  GET  /api/stats            â†’ JSON: summary stats
-  DELETE /api/game/<app_id>  â†’ remove a game from DB
+  GET  /                     dashboard (deals table)
+  GET  /game/<app_id>        game detail page
+  POST /api/sync/steam       trigger Steam wishlist sync
+  POST /api/sync/itad        trigger ITAD price sync
+  GET  /api/games            JSON: all games + deals
+  GET  /api/game/<app_id>    JSON: game detail with prices + bundles + history
+  GET  /api/stats            JSON: summary stats
+  DELETE /api/game/<app_id>  remove a game from DB
 """
 
 import os
@@ -42,10 +42,11 @@ from database import (
 )
 from steam import sync_wishlist
 from itad import sync_prices
+from sync_loaded_helper import sync_loaded
 
 app = Flask(__name__)
 
-# â”€â”€ Sync state (simple in-memory flag for showing progress in UI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Sync state (simple in-memory flag for showing progress in UI)
 sync_status = {
     "running": False,
     "step": "",
@@ -73,13 +74,21 @@ def run_full_sync(steam_id: str, steam_key: str, itad_key: str):
                 print(f"[ITAD] Skipped: {itad_err}")
                 sync_status["step"] = "ITAD skipped (see terminal)"
 
+        # Sync Loaded.com prices (with rate limiting to avoid blocks)
+        sync_status["step"] = "Loaded.com prices"
+        try:
+            sync_loaded()
+        except Exception as loaded_err:
+            print(f"[Loaded] Skipped: {loaded_err}")
+            sync_status["step"] = "Loaded skipped (see terminal)"
+
         sync_status = {"running": False, "step": "Done", "error": None, "done": True}
 
     except Exception as e:
         sync_status = {"running": False, "step": "", "error": str(e), "done": True}
 
 
-# â”€â”€ Page routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Page routes
 
 @app.route("/")
 def index():
@@ -102,7 +111,7 @@ def settings():
     return render_template("settings.html")
 
 
-# â”€â”€ API routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# API routes
 
 @app.route("/api/stats")
 def api_stats():
@@ -275,7 +284,7 @@ def api_delete_game(app_id: int):
     return jsonify({"ok": True})
 
 
-# â”€â”€ Template filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Template filters
 
 @app.template_filter("gbp")
 def fmt_gbp(value):
@@ -293,7 +302,7 @@ def short_date(value):
     return str(value)[:10]
 
 
-# â”€â”€ Startup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# Startup
 
 if __name__ == "__main__":
     init_db()
