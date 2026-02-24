@@ -42,6 +42,7 @@ from database import (
 )
 from steam import sync_wishlist
 from itad import sync_prices
+from sync_loaded_helper import sync_loaded
 
 app = Flask(__name__)
 
@@ -72,6 +73,14 @@ def run_full_sync(steam_id: str, steam_key: str, itad_key: str):
                 # work automatically once ITAD grants access.
                 print(f"[ITAD] Skipped: {itad_err}")
                 sync_status["step"] = "ITAD skipped (see terminal)"
+
+        # Sync Loaded.com prices (with rate limiting to avoid blocks)
+        sync_status["step"] = "Loaded.com prices"
+        try:
+            sync_loaded()
+        except Exception as loaded_err:
+            print(f"[Loaded] Skipped: {loaded_err}")
+            sync_status["step"] = "Loaded skipped (see terminal)"
 
         sync_status = {"running": False, "step": "Done", "error": None, "done": True}
 

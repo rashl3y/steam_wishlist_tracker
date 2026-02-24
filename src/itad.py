@@ -4,9 +4,9 @@ itad.py
 Fetches price data from IsThereAnyDeal (ITAD) API (current version).
 
 ITAD tracks prices across 30+ PC game stores and provides:
-  âœ“ Current prices across all stores
-  âœ“ Historic low prices
-  âœ“ Bundle history
+  Current prices across all stores
+  Historic low prices
+  Bundle history
 
 Authentication:
   Most public endpoints (prices, lookups, bundles) use a plain API key
@@ -465,5 +465,72 @@ def sync_prices(api_key: str) -> None:
 
     # Summary
     games_with_prices = sum(1 for g in prices_map.values() if g)
-    print(f"[ITAD] âœ“ Done. {games_with_prices}/{len(itad_ids)} games had prices available")
-    print(f"[ITAD] âœ“ Total: {total_prices_saved} prices saved, {len(historic_map)} historic lows, {sum(len(b) for b in bundles_map.values())} bundles")
+    print(f"[ITAD] Done. {games_with_prices}/{len(itad_ids)} games had prices available")
+    print(f"[ITAD] Total: {total_prices_saved} prices saved, {len(historic_map)} historic lows, {sum(len(b) for b in bundles_map.values())} bundles")
+
+
+def sync_loaded(steam_id_to_title: dict = None) -> None:
+    """
+    Sync prices from loaded.com for games in the database.
+    
+    loaded.com is a UK game key reseller with good prices.
+    We scrape the prices and save them to the database.
+    
+    Args:
+        steam_id_to_title: Optional dict of {app_id: game_title} to sync
+                          If None, syncs all games in database
+    """
+    import time
+    from loaded import scrape_game_price
+    
+    if steam_id_to_title is None:
+        # Get all games from database
+        games = get_all_games()
+        steam_id_to_title = {g["app_id"]: g["title"] for g in games}
+    
+    if not steam_id_to_title:
+        print("[Loaded] No games to sync")
+        return
+    
+    print(f"\n[Loaded] Scraping prices for {len(steam_id_to_title)} games...")
+    
+    prices_saved = 0
+    not_found = []
+    
+    for i, (app_id, title) in enumerate(steam_id_to_title.items(), 1):
+        try:
+            result = scrape_game_price(title, platform="pc", drm="steam")
+            
+            if result:
+                from database import upsert_price
+                
+                upsert_price(
+                    app_id=app_id,
+                    store="Loaded",
+                    price_current=result["price"],
+                    price_regular=result["regular_price"],
+                    currency=result["currency"],
+                    discount_pct=result["discount_pct"],
+                    url=result["url"],
+                    drm=result["drm"],
+                )
+                prices_saved += 1
+            else:
+                not_found.append(title)
+        
+        except Exception as e:
+            print(f"[Loaded] Error processing {title}: {e}")
+            not_found.append(title)
+        
+        # Delay between requests (rate limiting is also done in loaded.py)
+        if i < len(steam_id_to_title):
+            time.sleep(2)
+    
+    print(f"[Loaded] ✓ Saved {prices_saved}/{len(steam_id_to_title)} prices")
+    
+    if not_found and len(not_found) <= 10:
+        print(f"[Loaded] ⚠  Not found ({len(not_found)}):")
+        for title in not_found[:10]:
+            print(f"[Loaded]   - {title}")
+    elif not_found:
+        print(f"[Loaded] ⚠  {len(not_found)} games not found on Loaded")
