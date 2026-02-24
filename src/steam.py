@@ -15,9 +15,9 @@ How to get your Steam API key:
   (Log in, enter any domain name, copy the key)
 
 How to find your Steam ID:
-  â†’ Open Steam â†’ Profile â†’ Copy URL
-  â†’ If it's a custom URL like /id/username, visit:
-    https://www.steamidfinder.com to convert to a numeric SteamID64
+  Open Steam Profile Copy URL
+  If it's a custom URL like /id/username, visit:
+    https://steamdb.info/calculator/ to convert to a numeric SteamID64
 """
 
 import requests
@@ -60,7 +60,7 @@ def fetch_wishlist_app_ids(steam_id: str, api_key: str) -> list[int]:
     items = data.get("response", {}).get("items", [])
 
     if not items:
-        print("[Steam] âš  No wishlist items found. Check your Steam ID and privacy settings.")
+        print("[Steam] No wishlist items found. Check your Steam ID and privacy settings.")
         print("        Your Steam profile and game details must be set to Public.")
         return []
 
@@ -183,7 +183,7 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
                 )
             
             saved.append(app_id)
-            print(f"âœ“ {details['name']}")
+            print(f"{details['name']}")
 
         # Be polite to Steam's servers
         time.sleep(RATE_LIMIT_DELAY)

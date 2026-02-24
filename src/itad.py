@@ -16,11 +16,11 @@ Authentication:
   endpoints like Waitlist and Collection â€” we don't use those here.
 
 How to get your free API key:
-  â†’ https://isthereanydeal.com/apps/my/
-  Register an app â†’ your key and OAuth credentials are generated automatically.
+  https://isthereanydeal.com/apps/my/
+  Register an app your key and OAuth credentials are generated automatically.
 
 API documentation:
-  â†’ https://docs.isthereanydeal.com/
+  https://docs.isthereanydeal.com/
 
 Key concepts:
   - ITAD identifies games by internal UUIDs, not Steam App IDs.
@@ -53,7 +53,7 @@ def _warn_itad(err: Exception, what: str) -> None:
     """
     msg = str(err)
     if "403" in msg:
-        print(f"[ITAD] âš   {what} skipped â€” endpoint not yet approved.")
+        print(f"[ITAD]    {what} skipped endpoint not yet approved.")
         print(f"[ITAD]    Email api@isthereanydeal.com to request access.")
         print(f"[ITAD]    Once approved, this will work automatically.")
     else:
@@ -61,7 +61,7 @@ def _warn_itad(err: Exception, what: str) -> None:
 
 
 def _headers() -> dict:
-    """Standard headers for ITAD requests (no auth â€” key goes in query params)."""
+    """Standard headers for ITAD requests (no auth key goes in query params)."""
     return {"Content-Type": "application/json"}
 
 
@@ -86,7 +86,7 @@ def lookup_itad_ids(app_ids: list[int], api_key: str) -> dict[int, str]:
 
     for i in range(0, len(app_ids), CHUNK_SIZE):
         chunk_ids = app_ids[i:i + CHUNK_SIZE]
-        # Format: "app/{steam_app_id}" â€” ITAD's shop ID format for Steam
+        # Format: "app/{steam_app_id}" ITAD's shop ID format for Steam
         payload = [f"app/{aid}" for aid in chunk_ids]
 
         resp = requests.post(
@@ -350,7 +350,7 @@ def sync_prices(api_key: str) -> None:
     except Exception as e:
         print(f"[ITAD] Warning: Could not load Steam baselines: {e}")
 
-    # â”€â”€ Save current prices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save current prices
     games_with_no_deals = []
     total_prices_saved = 0
     
@@ -404,24 +404,24 @@ def sync_prices(api_key: str) -> None:
             debug_single_store_games.append((itad_to_steam.get(itad_id), deals[0].get("shop", {}).get("name", "unknown")))
     
     if debug_single_store_games and len(debug_single_store_games) > 5:
-        print(f"[ITAD] âš   {len(debug_single_store_games)} games only available from 1 store")
-        print(f"[ITAD]    Examples:")
+        print(f"[ITAD]  {len(debug_single_store_games)} games only available from 1 store")
+        print(f"[ITAD]  Examples:")
         for app_id, store in debug_single_store_games[:5]:
             print(f"[ITAD]    - {all_games_map.get(app_id, 'Unknown')}: only on {store}")
     
     # Report games with no deals
     if games_with_no_deals:
-        print(f"[ITAD] âš   {len(games_with_no_deals)} games returned no current prices from ITAD:")
+        print(f"[ITAD]  {len(games_with_no_deals)} games returned no current prices from ITAD:")
         for aid in games_with_no_deals[:10]:
             print(f"[ITAD]    - {all_games_map.get(aid, 'Unknown')} (App ID: {aid})")
 
-    # â”€â”€ Save historic lows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save historic lows
     for itad_id, low in historic_map.items():
         app_id = itad_to_steam.get(itad_id)
         if not app_id or not low.get("price"):
             continue
         
-        print(f"[ITAD] Saving historic low: App {app_id} = Â£{low['price']} @ {low['shop']}")
+        print(f"[ITAD] Saving historic low: App {app_id} = {low['price']} @ {low['shop']}")
         
         upsert_historic_low(
             app_id=app_id,
@@ -432,7 +432,7 @@ def sync_prices(api_key: str) -> None:
             recorded_date=low.get("date"),
         )
 
-    # â”€â”€ Save bundles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Save bundles
     for itad_id, bundle_list in bundles_map.items():
         app_id = itad_to_steam.get(itad_id)
         if not app_id:
@@ -455,7 +455,7 @@ def sync_prices(api_key: str) -> None:
                 expires_at=bundle.get("expiry"),
             )
 
-    # â"€â"€ Recalculate discounts based on Steam baseline â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    # Recalculate discounts based on Steam baseline
     print(f"\n[ITAD] Recalculating discounts based on Steam prices...")
     for app_id in steam_to_itad.keys():
         _recalculate_discounts_from_steam(app_id)
