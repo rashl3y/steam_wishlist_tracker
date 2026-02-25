@@ -107,9 +107,23 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
 
+def _to_ascii(text: str) -> str:
+    """Convert text to ASCII only, removing non-ASCII characters."""
+    if not text:
+        return ""
+    # Remove non-ASCII characters
+    ascii_text = text.encode('ascii', 'ignore').decode('ascii')
+    return ascii_text
+
+
 def _extract_prices_from_html(html: str) -> tuple:
     """
     Extract prices and title from HTML.
+    
+    Loaded.com structure:
+    - Old/full price (strikethrough): <div class="old-price"><span class="price">£64.99</span></div>
+    - Current price: <div class="final-price"><span class="price">£25.99</span></div>
+    - Meta tag (backup): <meta itemprop="price" content="25.99">
     
     Returns: (current_price, regular_price, title, discount_pct)
     """
@@ -135,32 +149,83 @@ def _extract_prices_from_html(html: str) -> tuple:
         if page_title:
             title = page_title.get_text(strip=True).split('|')[0].strip()
     
-    # Extract prices using regex
-    prices = re.findall(r'GBP ([\d.]+)', html)
+    # Check for stock status badges - if game is Sold Out or Coming Soon, return None
+    # Look for badges with red background or status indicators
+    page_text = soup.get_text()
+    page_text_lower = page_text.lower()
     
-    if not prices:
-        # Try meta tag
+    # Check for explicit "Sold Out" or "Coming Soon" text on the page
+    if 'sold out' in page_text_lower or 'coming soon' in page_text_lower:
+        # Look for the badge/status element
+        for elem in soup.find_all(['div', 'span']):
+            elem_text = elem.get_text(strip=True).lower()
+            if 'sold out' in elem_text:
+                print(f"[Loaded] [INFO] Game is SOLD OUT - not returning prices")
+                return None, None, title, 0
+            elif 'coming soon' in elem_text:
+                print(f"[Loaded] [INFO] Game is COMING SOON - not returning prices")
+                return None, None, title, 0
+    
+    # Also check if the page shows "not available" or "unavailable"
+    if 'unavailable' in page_text_lower or 'not available' in page_text_lower:
+        print(f"[Loaded] [INFO] Game is UNAVAILABLE - not returning prices")
+        return None, None, title, 0
+    
+    current_price = None
+    regular_price = None
+    
+    # Extract current price from .final-price (current/discounted price)
+    # Structure: <div class="final-price"><span class="price">£25.99</span></div>
+    final_price_elem = soup.find('div', class_='final-price')
+    if final_price_elem:
+        price_span = final_price_elem.find('span', class_='price')
+        if price_span:
+            price_text = price_span.get_text(strip=True)
+            # Extract number from "£25.99" format
+            match = re.search(r'[\u00a3$]?\s*([\d.]+)', price_text)
+            if match:
+                try:
+                    current_price = float(match.group(1))
+                except:
+                    pass
+    
+    # Extract regular/full price from .old-price (strikethrough)
+    # Structure: <div class="old-price"><span class="price">£64.99</span></div>
+    old_price_elem = soup.find('div', class_='old-price')
+    if old_price_elem:
+        price_span = old_price_elem.find('span', class_='price')
+        if price_span:
+            price_text = price_span.get_text(strip=True)
+            # Extract number from "£64.99" format
+            match = re.search(r'[\u00a3$]?\s*([\d.]+)', price_text)
+            if match:
+                try:
+                    regular_price = float(match.group(1))
+                except:
+                    pass
+    
+    # Fallback: Extract current price from meta tags if not found in HTML
+    if not current_price:
         meta_price = soup.find('meta', {'itemprop': 'price'})
         if meta_price:
             price_str = meta_price.get('content', '')
             if price_str:
-                prices = [float(price_str)]
+                try:
+                    current_price = float(price_str)
+                except:
+                    pass
     
-    if not prices:
+    # If only got current price, use it for both (no discount)
+    if current_price and not regular_price:
+        regular_price = current_price
+    
+    # If no prices found at all
+    if not current_price:
         return None, None, title, 0
-    
-    # On Loaded.com, first price is usually the regular (original) price,
-    # second price is the current (discounted) price
-    regular_price = float(prices[0])
-    current_price = float(prices[1]) if len(prices) > 1 else regular_price
-    
-    # If current price is higher than regular, they're swapped - fix it
-    if current_price > regular_price and len(prices) > 1:
-        current_price, regular_price = regular_price, current_price
     
     # Calculate discount
     discount_pct = 0
-    if regular_price > 0:
+    if regular_price and regular_price > 0 and current_price:
         discount_pct = int((regular_price - current_price) / regular_price * 100)
     
     return current_price, regular_price, title, discount_pct
@@ -231,7 +296,7 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
         
         print(f"[Loaded] [OK] Found: GBP {current_price:.2f} (was GBP {regular_price:.2f}, {discount_pct}% off)")
         if page_title and _similarity(page_title, game_title) < 0.7:
-            print(f"[Loaded]   (Title match: '{page_title}' vs '{game_title}')")
+            print(f"[Loaded]   (Title match: '{_to_ascii(page_title)}' vs '{_to_ascii(game_title)}')")
         
         # Reset rate limit counters on success
         _reset_rate_limit_on_success()
@@ -316,9 +381,15 @@ def search_loaded_with_wildcards(game_title: str, platform: str = "pc", drm: str
 
 def search_loaded_for_game(game_title: str) -> Optional[str]:
     """
-    Search Loaded.com for a game and return the product URL.
+    Search Loaded.com for a game using hash-based search URL.
     
-    Useful for when exact title matching fails.
+    Uses Selenium to render the page with JavaScript (which loads the search results).
+    
+    Format: https://www.loaded.com/#q=ratchet%20clank%20rift%20apart
+    (spaces are URL-encoded as %20)
+    
+    Prioritizes worldwide (WW) version, avoids regional variants (EU, UK, etc).
+    Verifies the result actually matches the game title we searched for.
     
     Args:
         game_title: Game name to search for
@@ -329,56 +400,132 @@ def search_loaded_for_game(game_title: str) -> Optional[str]:
     
     _enforce_rate_limit()
     
-    search_url = f"{LOADED_BASE}/search"
-    params = {"q": game_title}
+    # Convert title: replace special characters with spaces, then URL encode
+    search_term = re.sub(r'[^a-z0-9\s]', ' ', game_title.lower())
+    search_term = re.sub(r'\s+', ' ', search_term).strip()
+    search_term = search_term.replace(' ', '%20')
     
-    print(f"[Loaded] Searching Loaded.com for: {game_title}")
+    search_url = f"{LOADED_BASE}/#q={search_term}"
+    
+    print(f"[Loaded] Searching Loaded.com for: {_to_ascii(game_title)}")
+    print(f"[Loaded] Search URL: {search_url}")
     
     try:
-        resp = requests.get(search_url, params=params, headers=HEADERS, timeout=LOADED_TIMEOUT)
-        resp.raise_for_status()
+        # Try Selenium first (if available)
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.chrome.options import Options
+            
+            # Configure headless browser
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            
+            driver = webdriver.Chrome(options=chrome_options)
+            
+            try:
+                # Load the search page
+                driver.get(search_url)
+                
+                # Wait for search results to load (up to 10 seconds)
+                wait = WebDriverWait(driver, 10)
+                wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, 'algolia-hit-link')))
+                
+                # Get the rendered HTML
+                html = driver.page_source
+                
+                # Parse with BeautifulSoup
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Find algolia search results
+                product_links = soup.find_all('a', class_='algolia-hit-link')
+                
+                if not product_links:
+                    print(f"[Loaded] Search found no results")
+                    return None
+                
+                # Go through each link and verify it matches our search
+                search_terms_lower = game_title.lower()
+                title_words = re.findall(r'\b[a-z0-9]+\b', search_terms_lower)
+                
+                # Separate WW and regional versions
+                ww_candidates = []
+                regional_candidates = []
+                
+                for link in product_links:
+                    href = link.get('href', '')
+                    link_text = link.get_text(strip=True).lower()
+                    
+                    # Check if it's a PC game link
+                    if '-pc-' not in href or 'loaded.com' not in href:
+                        continue
+                    
+                    # Exclude non-PC platforms
+                    if any(x in href.lower() for x in ['-xbox', '-psn', '-switch']):
+                        continue
+                    
+                    # Verify the link text contains the game title words
+                    if title_words:
+                        matches = sum(1 for word in title_words if word in link_text)
+                        match_ratio = matches / len(title_words)
+                        
+                        if match_ratio >= 0.5:  # At least 50% of terms match
+                            full_url = href if href.startswith('http') else f"{LOADED_BASE}{href}"
+                            
+                            # Check if it's a WW (worldwide) version or regional
+                            # WW versions don't have -eu, -uk, -asia, etc in the URL or link text
+                            is_regional = any(region in full_url.lower() for region in ['-eu', '-uk', '-asia', '-jp', '-au'])
+                            is_regional = is_regional or any(region in link_text for region in ['eu &', 'uk)', 'asia', 'japan', 'australian'])
+                            
+                            if is_regional:
+                                regional_candidates.append(full_url)
+                            else:
+                                ww_candidates.append(full_url)
+                
+                # Prefer WW version, fall back to regional if needed
+                if ww_candidates:
+                    result_url = ww_candidates[0]
+                    print(f"[Loaded] Search found (WW): {result_url}")
+                    return result_url
+                elif regional_candidates:
+                    result_url = regional_candidates[0]
+                    print(f"[Loaded] Search found (regional): {result_url}")
+                    return result_url
+                
+                print(f"[Loaded] Search found no matching PC results")
+                return None
+            
+            finally:
+                driver.quit()
         
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Find first product link (try multiple selectors)
-        product_link = None
-        for selector in ['a.product-name', 'a[data-product]', 'a.product-link']:
-            product_link = soup.select_one(selector)
-            if product_link:
-                break
-        
-        # If not found with selector, find first 'a' tag that looks like a product
-        if not product_link:
-            for link in soup.find_all('a'):
+        except ImportError:
+            # Selenium not available, fall back to requests (won't work for JS-rendered content)
+            print(f"[Loaded] [WARNING] Selenium not installed - search won't work (install: pip install selenium)")
+            print(f"[Loaded] [WARNING] Falling back to basic requests (will likely fail)")
+            
+            resp = requests.get(search_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+            resp.raise_for_status()
+            
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            product_links = soup.find_all('a', class_='algolia-hit-link')
+            
+            if not product_links:
+                print(f"[Loaded] Search found no results")
+                return None
+            
+            # Try first PC link (may not be correct)
+            for link in product_links:
                 href = link.get('href', '')
-                # Look for game URLs on Loaded.com
-                if '/pc-steam' in href or '/pc-' in href:
-                    product_link = link
-                    break
-        
-        if product_link:
-            href = product_link.get('href')
-            if href:
-                full_url = href if href.startswith('http') else f"{LOADED_BASE}{href}"
-                # Verify it's a valid Loaded.com product URL with PC platform
-                # (exclude Xbox, PlayStation, Nintendo, etc.)
-                if 'loaded.com' in full_url and '-pc-' in full_url:
-                    print(f"[Loaded] Search found: {full_url}")
-                    return full_url
-        
-        # If not found with first selector, try multiple links looking for PC only
-        for link in soup.find_all('a'):
-            href = link.get('href', '')
-            # Look for PC game URLs only
-            if '/pc-' in href and 'loaded.com' in href:
-                full_url = href if href.startswith('http') else f"{LOADED_BASE}{href}"
-                # Double-check it's PC (not xbox, psn, etc.)
-                if '-pc-' in full_url and not any(x in full_url for x in ['-xbox', '-psn', '-switch']):
-                    print(f"[Loaded] Search found: {full_url}")
-                    return full_url
-        
-        print(f"[Loaded] Search found no valid PC results")
-        return None
+                if '-pc-' in href and 'loaded.com' in href:
+                    print(f"[Loaded] Search found: {href}")
+                    return href
+            
+            return None
     
     except Exception as e:
         print(f"[Loaded] Search error: {e}")
