@@ -444,7 +444,6 @@ Then run: `python app.py`
 
 **Solution:**
 - Use Loaded.com only (no ITAD key needed)
-- Or upgrade ITAD to paid plan
 
 ### "ModuleNotFoundError"
 
@@ -516,19 +515,6 @@ with open('deals.csv', 'w') as f:
     writer = csv.DictWriter(f, fieldnames=deals[0].keys())
     writer.writeheader()
     writer.writerows(deals)
-```
-
-### Email Notifications
-
-```python
-from src.database import get_deals_report
-
-deals = get_deals_report()
-
-# Games with 50%+ off
-hot_deals = [d for d in deals if d['best_discount'] >= 50]
-
-# Email to yourself with hot_deals
 ```
 
 ## Contributing
