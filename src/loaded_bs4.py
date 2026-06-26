@@ -294,6 +294,12 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
         # Use extracted title if available, otherwise use input
         final_title = page_title if page_title else game_title
         
+        # Reject the result if the page title is too dissimilar to what we searched for.
+        # This catches cases where a wildcard/search URL resolves to a completely different game.
+        if page_title and _similarity(page_title, game_title) < 0.5:
+            print(f"[Loaded] [SKIP] Title mismatch: '{_to_ascii(page_title)}' vs '{_to_ascii(game_title)}' (similarity too low)")
+            return None
+        
         print(f"[Loaded] [OK] Found: GBP {current_price:.2f} (was GBP {regular_price:.2f}, {discount_pct}% off)")
         if page_title and _similarity(page_title, game_title) < 0.7:
             print(f"[Loaded]   (Title match: '{_to_ascii(page_title)}' vs '{_to_ascii(game_title)}')")
@@ -452,6 +458,9 @@ def search_loaded_for_game(game_title: str) -> Optional[str]:
                 # Go through each link and verify it matches our search
                 search_terms_lower = game_title.lower()
                 title_words = re.findall(r'\b[a-z0-9]+\b', search_terms_lower)
+                # Numbers and short words (≤3 chars) are high-signal discriminators
+                # e.g. "3" in "Guild Wars 3" must appear in the result title
+                discriminators = [w for w in title_words if w.isdigit() or (len(w) <= 3 and not w in {'the', 'of', 'a', 'an', 'in', 'at', 'to', 'pc'})]
                 
                 # Separate WW and regional versions
                 ww_candidates = []
@@ -473,8 +482,11 @@ def search_loaded_for_game(game_title: str) -> Optional[str]:
                     if title_words:
                         matches = sum(1 for word in title_words if word in link_text)
                         match_ratio = matches / len(title_words)
-                        
-                        if match_ratio >= 0.5:  # At least 50% of terms match
+
+                        # All discriminating tokens (numbers, short unique words) must match
+                        discriminators_matched = all(d in link_text for d in discriminators)
+
+                        if match_ratio >= 0.8 and discriminators_matched:  # Raised from 0.5; all discriminators required
                             full_url = href if href.startswith('http') else f"{LOADED_BASE}{href}"
                             
                             # Check if it's a WW (worldwide) version or regional
