@@ -4,8 +4,8 @@ main.py
 Command-line interface for the Steam Wishlist Price Tracker.
 
 Run this file to interact with the tool:
-  python main.py sync fetch wishlist + all prices
-  python main.py report show deals table
+  python main.py sync    fetch wishlist + all prices
+  python main.py report  show deals table
   python main.py game 570 detailed view for one game
 
 Uses Python's built-in 'argparse' for CLI argument parsing.
@@ -139,7 +139,7 @@ def cmd_sync(args) -> None:
         print(f"{YELLOW}Warning: Loaded.com sync failed{RESET}")
         print(f"      {loaded_err}")
 
-    print(f"\n{GREEN}“ Sync complete!{RESET} Run `python main.py report` to see deals.\n")
+    print(f"\n{GREEN}Sync complete!{RESET} Run `python main.py report` to see deals.\n")
 
 
 def cmd_report(args) -> None:
@@ -170,17 +170,19 @@ def cmd_report(args) -> None:
 
     # Table header
     print(f"  {'GAME':<45} {'STORE':<20} {'PRICE':>10} {'DISC':>6} {'LOW':>10}")
+    print()
 
     for r in rows:
         title = r["title"][:44] if r["title"] else "Unknown"
-        store = r["best_store"][:19] if r.get("best_store") else "N/A"
-        price = fmt_price(r["best_price"], r["currency"]) if r.get("best_price") else "N/A"
-        disc  = f"{r['best_discount']}%" if r.get("best_discount") else "â€”"
-        low   = fmt_price(r["historic_low"], r["currency"]) if r.get("historic_low") else "â€”"
+        store = r["best_store"][:19] if r.get("best_store") else "—"
+        price = fmt_price(r["best_price"], r["currency"]) if r.get("best_price") else "—"
+        disc  = f"{r['best_discount']}%" if r.get("best_discount") else "—"
+        low   = fmt_price(r["historic_low"], r["currency"]) if r.get("historic_low") else "—"
 
         print(f"  {title:<45} {store:<20} {price:>10} {disc:>5}  {low:>10}")
 
     # Summary footer
+    print()
     stats = get_stats()
     on_sale_count = sum(1 for r in rows if r.get("best_discount", 0) and r["best_discount"] > 0)
     print(f"{DIM}Summary: {on_sale_count}/{len(rows)} games on sale | {stats['total_bundles']} bundles tracked{RESET}")
@@ -234,6 +236,7 @@ def cmd_game(args) -> None:
     if history:
         print(f"{BOLD}Price History ({len(history)} records):{RESET}")
         print(f"  {'DATE':<20} {'STORE':<20} {'PRICE':>10} {'DISC':>5}")
+        print()
         for h in history[-20:]:  # show last 20 entries
             print(
                 f"  {h['recorded_at'][:16]:<20} "
@@ -277,11 +280,11 @@ def cmd_list(args) -> None:
 
 def cmd_clear(args) -> None:
     """Clear all data from database and reinitialize."""
-    confirm = input(f"{RED} This will delete ALL data. Type 'yes' to confirm: {RESET}")
+    confirm = input(f"{RED}This will delete ALL data. Type 'yes' to confirm: {RESET}")
     if confirm.lower() == "yes":
         from src.database import clear_database
         clear_database()
-        print(f"{GREEN} Database cleared and reinitialized.{RESET}\n")
+        print(f"{GREEN}Database cleared and reinitialized.{RESET}\n")
     else:
         print("Cancelled.\n")
 
@@ -322,7 +325,7 @@ Environment variables (alternative to flags):
     # Removed: --country (not used)
     sync_p.set_defaults(func=cmd_sync)
 
-    # eport subcommand
+    # report subcommand
     report_p = subparsers.add_parser("report", help="Show deals report")
     report_p.add_argument("--on-sale", action="store_true", help="Only show games currently on sale")
     report_p.add_argument("--min-discount", type=int, metavar="PCT",
@@ -334,7 +337,7 @@ Environment variables (alternative to flags):
     game_p.add_argument("game_id", help="Steam App ID (e.g. 570) or game name (e.g. 'Dota 2')")
     game_p.set_defaults(func=cmd_game)
 
-    # ist subcommand
+    # list subcommand
     list_p = subparsers.add_parser("list", help="List all games in database")
     list_p.set_defaults(func=cmd_list)
 

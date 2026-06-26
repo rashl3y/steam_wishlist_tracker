@@ -141,6 +141,8 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
     Main entry point: fetch wishlist, look up each game's details,
     save everything to the database.
 
+    Also removes games from the DB that are no longer on the wishlist.
+
     Returns the list of app_ids that were successfully saved.
 
     Design note: we fetch all IDs first (fast, one request), then
@@ -150,12 +152,24 @@ def sync_wishlist(steam_id: str, api_key: str) -> list[int]:
     if not app_ids:
         return []
 
-    # Check which games we already have in the DB (avoid redundant fetches)
-    existing = {g["app_id"] for g in get_all_games()}
-    new_ids = [aid for aid in app_ids if aid not in existing]
-    print(f"[Steam] {len(existing)} already in DB, fetching details for {len(new_ids)} new games...")
+    wishlist_set = set(app_ids)
 
-    saved = list(existing)  # start with already-known games
+    # Remove games from DB that are no longer on the wishlist
+    existing_games = get_all_games()
+    existing = {g["app_id"] for g in existing_games}
+    removed = existing - wishlist_set
+    if removed:
+        from src.database import delete_game
+        print(f"[Steam] Removing {len(removed)} game(s) no longer on wishlist...")
+        for app_id in removed:
+            title = next((g["title"] for g in existing_games if g["app_id"] == app_id), str(app_id))
+            print(f"[Steam]   - Removed: {title} (App ID: {app_id})")
+            delete_game(app_id)
+
+    new_ids = [aid for aid in app_ids if aid not in existing]
+    print(f"[Steam] {len(existing) - len(removed)} already in DB, fetching details for {len(new_ids)} new games...")
+
+    saved = [aid for aid in existing if aid in wishlist_set]  # start with retained games
 
     for i, app_id in enumerate(new_ids, 1):
         print(f"[Steam] ({i}/{len(new_ids)}) Fetching details for app {app_id}...", end=" ")

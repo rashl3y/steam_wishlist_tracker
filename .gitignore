@@ -1,6 +1,9 @@
 # Environment variables (contains secrets)
 .env
 
+# Scheduler
+*.sh
+
 # Database
 data/
 
