@@ -10,35 +10,36 @@ Handles title matching issues:
 - Extracts actual title from page content
 """
 
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import re
 from typing import Optional, Dict
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import time
-import random
 
 LOADED_BASE = "https://www.loaded.com"
 LOADED_TIMEOUT = 20
 
 # Rate limiting - adaptive
 _last_request_time = 0
-_min_delay_seconds = 3.0  # Start conservatively (3 seconds)
+_min_delay_seconds = 1.0  # Start aggressive (1 second)
 _rate_limited = False  # Track if we hit 403 (rate limited)
 _consecutive_errors = 0  # Track consecutive 403s
 
 # # Headers -------------------------------------------------------------------
 
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
     'DNT': '1',
-    'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
 }
+
+# Use cloudscraper to bypass Cloudflare JS challenges
+_scraper = cloudscraper.create_scraper(
+    browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
+)
 
 
 def _enforce_rate_limit():
@@ -46,11 +47,8 @@ def _enforce_rate_limit():
     global _last_request_time, _min_delay_seconds
     now = time.time()
     elapsed = now - _last_request_time
-    # Add random jitter (0.5 to 1.5x the base delay) to avoid bot detection
-    jitter = random.uniform(0.5, 1.5)
-    effective_delay = _min_delay_seconds * jitter
-    if elapsed < effective_delay:
-        wait_time = effective_delay - elapsed
+    if elapsed < _min_delay_seconds:
+        wait_time = _min_delay_seconds - elapsed
         if wait_time > 0.1:  # Only log if significant wait
             print(f"[Loaded] Rate limit: waiting {wait_time:.1f}s...")
         time.sleep(wait_time)
@@ -261,14 +259,14 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
     print(f"[Loaded] BS4: {url}")
     
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+        resp = _scraper.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT)
         
         # 404: Try wildcard patterns first, then search
         if resp.status_code == 404:
             print(f"[Loaded] 404, trying wildcard patterns...")
             wildcard_url = search_loaded_with_wildcards(game_title, platform, drm)
             if wildcard_url:
-                resp = requests.get(wildcard_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+                resp = _scraper.get(wildcard_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
                 if resp.status_code != 200:
                     return None
             else:
@@ -322,14 +320,16 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     
-    except requests.exceptions.Timeout:
-        print(f"[Loaded] Timeout: {game_title}")
-        return None
-    except requests.exceptions.ConnectionError:
-        print(f"[Loaded] Connection error: {game_title}")
+    except cloudscraper.exceptions.CloudflareChallengeError as e:
+        print(f"[Loaded] Cloudflare challenge failed: {game_title}: {e}")
         return None
     except Exception as e:
-        print(f"[Loaded] Error: {game_title}: {e}")
+        if "Timeout" in str(type(e).__name__):
+            print(f"[Loaded] Timeout: {game_title}")
+        elif "ConnectionError" in str(type(e).__name__):
+            print(f"[Loaded] Connection error: {game_title}")
+        else:
+            print(f"[Loaded] Error: {game_title}: {e}")
         return None
 
 
@@ -375,7 +375,7 @@ def search_loaded_with_wildcards(game_title: str, platform: str = "pc", drm: str
     for pattern in patterns:
         url = f"{LOADED_BASE}/{pattern}"
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT, allow_redirects=False)
+            resp = _scraper.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT, allow_redirects=False)
             if resp.status_code == 200:
                 # Verify URL contains -pc- (skip Xbox, PSN, etc.)
                 if '-pc-' in url:
@@ -524,7 +524,7 @@ def search_loaded_for_game(game_title: str) -> Optional[str]:
             print(f"[Loaded] [WARNING] Selenium not installed - search won't work (install: pip install selenium)")
             print(f"[Loaded] [WARNING] Falling back to basic requests (will likely fail)")
             
-            resp = requests.get(search_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+            resp = _scraper.get(search_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
             resp.raise_for_status()
             
             soup = BeautifulSoup(resp.text, 'html.parser')
