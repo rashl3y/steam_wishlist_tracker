@@ -7,7 +7,7 @@ Separate from itad.py to keep ITAD API module unchanged.
 
 import time
 from loaded_bs4 import scrape_game_price
-from database import get_all_games, upsert_price
+from database import get_all_games, upsert_price, delete_store_price
 
 
 def sync_loaded(steam_id_to_title: dict = None) -> None:
@@ -52,6 +52,8 @@ def sync_loaded(steam_id_to_title: dict = None) -> None:
                 )
                 prices_saved += 1
             else:
+                # Remove stale Loaded price so it doesn't show as available
+                delete_store_price(app_id, "Loaded")
                 not_found.append(title)
         
         except Exception as e:

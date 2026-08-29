@@ -153,6 +153,15 @@ def get_all_games() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def delete_store_price(app_id: int, store: str) -> None:
+    """Remove a specific store's current price for a game (e.g. when out of stock).
+    Price history is preserved."""
+    conn = get_connection()
+    conn.execute("DELETE FROM prices WHERE app_id = ? AND store = ?", (app_id, store))
+    conn.commit()
+    conn.close()
+
+
 def delete_game(app_id: int) -> None:
     """Remove a game and all its associated price/bundle data (cascade)."""
     conn = get_connection()
@@ -304,15 +313,12 @@ def get_all_prices_for_game(app_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_game_price_history(app_id: int, days: int = 90) -> list[dict]:
-    """Get price history for a specific game, limited to the last N days (default 90)."""
+def get_game_price_history(app_id: int) -> list[dict]:
+    """Get price history for a specific game."""
     conn = get_connection()
     rows = conn.execute(
-        """SELECT * FROM price_history 
-           WHERE app_id = ? 
-           AND recorded_at >= datetime('now', '-' || ? || ' days')
-           ORDER BY recorded_at DESC""",
-        (app_id, days)
+        "SELECT * FROM price_history WHERE app_id = ? ORDER BY recorded_at DESC",
+        (app_id,)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

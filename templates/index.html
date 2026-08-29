@@ -274,7 +274,7 @@ async function loadDeals() {
     populateStoreDropdown();
     populateDRMDropdown();
     
-    renderTable(allGames);
+    applyFilters();
 
     // Stats
     const s = await (await fetch("/api/stats")).json();
@@ -501,10 +501,14 @@ document.querySelectorAll(".filter-toggle").forEach(btn => {
       btn.classList.add("active");
     }
     applyFilters();
+    saveFilterState();
   });
 });
 
-document.getElementById("search-input").addEventListener("input", applyFilters);
+document.getElementById("search-input").addEventListener("input", () => {
+  applyFilters();
+  saveFilterState();
+});
 
 function populateStoreDropdown() {
   const container = document.getElementById("store-checkboxes");
@@ -519,8 +523,9 @@ function populateStoreDropdown() {
     </label>
   `).join('');
   
-  // Add event listeners
+  // Add event listeners and restore checked state
   container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    if (excludedStores.has(cb.dataset.store)) cb.checked = true;
     cb.addEventListener('change', (e) => {
       const store = e.target.dataset.store;
       if (e.target.checked) {
@@ -530,8 +535,10 @@ function populateStoreDropdown() {
       }
       updateExcludeCount();
       applyFilters();
+      saveFilterState();
     });
   });
+  updateExcludeCount();
 }
 
 function updateExcludeCount() {
@@ -553,8 +560,9 @@ function populateDRMDropdown() {
     </label>
   `).join('');
   
-  // Add event listeners
+  // Add event listeners and restore checked state
   container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    if (requiredDRM.has(cb.dataset.drm)) cb.checked = true;
     cb.addEventListener('change', (e) => {
       const drm = e.target.dataset.drm;
       if (e.target.checked) {
@@ -564,8 +572,10 @@ function populateDRMDropdown() {
       }
       updateDRMCount();
       applyFilters();
+      saveFilterState();
     });
   });
+  updateDRMCount();
 }
 
 function updateDRMCount() {
@@ -596,6 +606,43 @@ document.addEventListener('click', (e) => {
   }
 });
 
-document.addEventListener("DOMContentLoaded", loadDeals);
+// ── Save & restore filter state ───────────────────────────────────────────────
+
+function saveFilterState() {
+  sessionStorage.setItem("activeFilters", JSON.stringify([...activeFilters]));
+  sessionStorage.setItem("excludedStores", JSON.stringify([...excludedStores]));
+  sessionStorage.setItem("requiredDRM", JSON.stringify([...requiredDRM]));
+  sessionStorage.setItem("sortBy", sortBy);
+  sessionStorage.setItem("searchQuery", document.getElementById("search-input").value);
+}
+
+function restoreFilterState() {
+  const filters = sessionStorage.getItem("activeFilters");
+  const stores  = sessionStorage.getItem("excludedStores");
+  const drm     = sessionStorage.getItem("requiredDRM");
+  const sort    = sessionStorage.getItem("sortBy");
+  const search  = sessionStorage.getItem("searchQuery");
+
+  if (filters) JSON.parse(filters).forEach(f => activeFilters.add(f));
+  if (stores)  JSON.parse(stores).forEach(s => excludedStores.add(s));
+  if (drm)     JSON.parse(drm).forEach(d => requiredDRM.add(d));
+  if (sort)    sortBy = sort;
+  if (search)  document.getElementById("search-input").value = search;
+
+  // Restore active filter button styles
+  document.querySelectorAll(".filter-toggle[data-filter]").forEach(btn => {
+    if (activeFilters.has(btn.dataset.filter)) btn.classList.add("active");
+  });
+
+  // Restore sort button styles
+  document.querySelectorAll(".filter-toggle[data-sort]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.sort === sortBy);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  restoreFilterState();
+  await loadDeals();
+});
 </script>
 {% endblock %}
