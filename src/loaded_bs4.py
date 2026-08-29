@@ -10,7 +10,7 @@ Handles title matching issues:
 - Extracts actual title from page content
 """
 
-import cloudscraper
+import requests
 from bs4 import BeautifulSoup
 import re
 from typing import Optional, Dict
@@ -30,16 +30,14 @@ _consecutive_errors = 0  # Track consecutive 403s
 # # Headers -------------------------------------------------------------------
 
 HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
     'DNT': '1',
+    'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
 }
-
-# Use cloudscraper to bypass Cloudflare JS challenges
-_scraper = cloudscraper.create_scraper(
-    browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False}
-)
 
 
 def _enforce_rate_limit():
@@ -259,14 +257,14 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
     print(f"[Loaded] BS4: {url}")
     
     try:
-        resp = _scraper.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+        resp = requests.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT)
         
         # 404: Try wildcard patterns first, then search
         if resp.status_code == 404:
             print(f"[Loaded] 404, trying wildcard patterns...")
             wildcard_url = search_loaded_with_wildcards(game_title, platform, drm)
             if wildcard_url:
-                resp = _scraper.get(wildcard_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+                resp = requests.get(wildcard_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
                 if resp.status_code != 200:
                     return None
             else:
@@ -320,16 +318,14 @@ def scrape_game_price(game_title: str, platform: str = "pc", drm: str = "steam")
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     
-    except cloudscraper.exceptions.CloudflareChallengeError as e:
-        print(f"[Loaded] Cloudflare challenge failed: {game_title}: {e}")
+    except requests.exceptions.Timeout:
+        print(f"[Loaded] Timeout: {game_title}")
+        return None
+    except requests.exceptions.ConnectionError:
+        print(f"[Loaded] Connection error: {game_title}")
         return None
     except Exception as e:
-        if "Timeout" in str(type(e).__name__):
-            print(f"[Loaded] Timeout: {game_title}")
-        elif "ConnectionError" in str(type(e).__name__):
-            print(f"[Loaded] Connection error: {game_title}")
-        else:
-            print(f"[Loaded] Error: {game_title}: {e}")
+        print(f"[Loaded] Error: {game_title}: {e}")
         return None
 
 
@@ -360,14 +356,18 @@ def search_loaded_with_wildcards(game_title: str, platform: str = "pc", drm: str
     
     # Try common patterns
     patterns = [
-        f"{normalized_title}-{platform}-{drm}",  # Exact
-        f"{normalized_title}-2024-{platform}-{drm}",  # With current year
-        f"{normalized_title}-2023-{platform}-{drm}",  # Previous year
-        f"{normalized_title}-2022-{platform}-{drm}",  # 2 years ago
-        f"{normalized_title}-deluxe-{platform}-{drm}",  # Deluxe edition
-        f"{normalized_title}-ultimate-{platform}-{drm}",  # Ultimate edition
-        f"{normalized_title}-standard-{platform}-{drm}",  # Standard edition
-        f"{normalized_title}-{platform}-{drm}-cd-key",  # CD key variant
+        f"{normalized_title}-{platform}-{drm}",              # Exact
+        f"{normalized_title}-{platform}-{drm}-eu",           # EU regional
+        f"{normalized_title}-{platform}-{drm}-uk",           # UK regional
+        f"{normalized_title}-{platform}-{drm}-ww",           # Worldwide
+        f"{normalized_title}-2024-{platform}-{drm}",         # With current year
+        f"{normalized_title}-2023-{platform}-{drm}",         # Previous year
+        f"{normalized_title}-2022-{platform}-{drm}",         # 2 years ago
+        f"{normalized_title}-deluxe-{platform}-{drm}",       # Deluxe edition
+        f"{normalized_title}-ultimate-{platform}-{drm}",     # Ultimate edition
+        f"{normalized_title}-standard-{platform}-{drm}",     # Standard edition
+        f"{normalized_title}-{platform}-{drm}-cd-key",       # CD key variant
+        f"{normalized_title}-{platform}-{drm}-eu-cd-key",    # EU CD key variant
     ]
     
     print(f"[Loaded] Trying wildcard patterns for: {game_title}")
@@ -375,7 +375,7 @@ def search_loaded_with_wildcards(game_title: str, platform: str = "pc", drm: str
     for pattern in patterns:
         url = f"{LOADED_BASE}/{pattern}"
         try:
-            resp = _scraper.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT, allow_redirects=False)
+            resp = requests.get(url, headers=HEADERS, timeout=LOADED_TIMEOUT, allow_redirects=False)
             if resp.status_code == 200:
                 # Verify URL contains -pc- (skip Xbox, PSN, etc.)
                 if '-pc-' in url:
@@ -524,7 +524,7 @@ def search_loaded_for_game(game_title: str) -> Optional[str]:
             print(f"[Loaded] [WARNING] Selenium not installed - search won't work (install: pip install selenium)")
             print(f"[Loaded] [WARNING] Falling back to basic requests (will likely fail)")
             
-            resp = _scraper.get(search_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
+            resp = requests.get(search_url, headers=HEADERS, timeout=LOADED_TIMEOUT)
             resp.raise_for_status()
             
             soup = BeautifulSoup(resp.text, 'html.parser')
