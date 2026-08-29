@@ -169,7 +169,7 @@
 </div>
 
 <!-- Hero section (populated via JS) -->
-<div class="game-hero" id="game-hero">
+<div class="game-hero" id="game-hero" data-app-id="{{ game.app_id }}">
   <div style="width:280px;height:140px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);"></div>
   <div>
     <div style="height:32px;width:60%;background:var(--surface2);border-radius:6px;margin-bottom:12px;"></div>
@@ -214,7 +214,7 @@
 <!-- Lightweight chart library -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-const APP_ID = {{ game.app_id }};
+const APP_ID = parseInt(document.getElementById("game-hero").dataset.appId, 10);
 
 // Get excluded stores and required DRM from URL query params
 function getExcludedStores() {
