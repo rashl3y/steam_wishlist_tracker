@@ -304,12 +304,15 @@ def get_all_prices_for_game(app_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_game_price_history(app_id: int) -> list[dict]:
-    """Get price history for a specific game."""
+def get_game_price_history(app_id: int, days: int = 90) -> list[dict]:
+    """Get price history for a specific game, limited to the last N days (default 90)."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT * FROM price_history WHERE app_id = ? ORDER BY recorded_at DESC",
-        (app_id,)
+        """SELECT * FROM price_history 
+           WHERE app_id = ? 
+           AND recorded_at >= datetime('now', '-' || ? || ' days')
+           ORDER BY recorded_at DESC""",
+        (app_id, days)
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

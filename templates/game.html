@@ -381,9 +381,18 @@ function renderChart(history) {
     !excludedStores.has(h.store)
   );
 
+  // Deduplicate to one data point per store per day (keeps earliest entry per day)
+  const seen = new Set();
+  const thinned = chartData.filter(h => {
+    const key = `${h.store}|${h.recorded_at.slice(0, 10)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   // Group by store so each store is a separate line
   const storeMap = {};
-  chartData.forEach(h => {
+  thinned.forEach(h => {
     if (!storeMap[h.store]) storeMap[h.store] = [];
     storeMap[h.store].push({ x: h.recorded_at.slice(0,10), y: h.price });
   });
