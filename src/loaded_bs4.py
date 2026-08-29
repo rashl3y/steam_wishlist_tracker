@@ -17,13 +17,14 @@ from typing import Optional, Dict
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import time
+import random
 
 LOADED_BASE = "https://www.loaded.com"
 LOADED_TIMEOUT = 20
 
 # Rate limiting - adaptive
 _last_request_time = 0
-_min_delay_seconds = 1.0  # Start aggressive (1 second)
+_min_delay_seconds = 3.0  # Start conservatively (3 seconds)
 _rate_limited = False  # Track if we hit 403 (rate limited)
 _consecutive_errors = 0  # Track consecutive 403s
 
@@ -45,8 +46,11 @@ def _enforce_rate_limit():
     global _last_request_time, _min_delay_seconds
     now = time.time()
     elapsed = now - _last_request_time
-    if elapsed < _min_delay_seconds:
-        wait_time = _min_delay_seconds - elapsed
+    # Add random jitter (0.5 to 1.5x the base delay) to avoid bot detection
+    jitter = random.uniform(0.5, 1.5)
+    effective_delay = _min_delay_seconds * jitter
+    if elapsed < effective_delay:
+        wait_time = effective_delay - elapsed
         if wait_time > 0.1:  # Only log if significant wait
             print(f"[Loaded] Rate limit: waiting {wait_time:.1f}s...")
         time.sleep(wait_time)
